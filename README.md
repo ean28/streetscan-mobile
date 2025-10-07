@@ -1,4 +1,4 @@
-# streetscanv2
+# Street Scan Mobile
 
 A new Flutter project.
 
