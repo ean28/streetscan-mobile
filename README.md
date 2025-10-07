@@ -1,6 +1,8 @@
 # Street Scan Mobile
 
-A new Flutter project.
+Real-time pothole detection with road condition reporting and mapping mobile application.
+
+For iOS and Android.
 
 ## Getting Started
 
