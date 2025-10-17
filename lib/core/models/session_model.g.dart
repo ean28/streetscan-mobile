@@ -24,9 +24,11 @@ class SessionModelAdapter extends TypeAdapter<SessionModel> {
       pendingUpload: fields[4] as bool,
       averageLatency: fields[5] as double?,
       totalFramesProcessed: fields[6] as int?,
-      gpsTrack: (fields[7] as List?)
-          ?.map((dynamic e) => (e as Map).cast<String, double>())
-          ?.toList(),
+      gpsTrack: (fields[7] as List?) != null
+          ? (fields[7] as List)
+                .map((dynamic e) => (e as Map).cast<String, double>())
+                .toList()
+          : null,
       potholeSeverityCounts: (fields[8] as Map?)?.cast<String, int>(),
     );
   }
