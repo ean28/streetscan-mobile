@@ -6,9 +6,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:street_scan/screens/session_review_screen.dart';
 import 'package:street_scan/screens/upload_screen.dart';
+import 'package:street_scan/screens/upload_manager_screen.dart';
+
+import '../core/services/upload_manager.dart';
 // import 'package:flutter/foundation.dart';
 
-import '../core/services/roadmap_service.dart';
 import '../core/services/local_storage_service.dart';
 import '../core/models/session_model.dart';
 
@@ -26,7 +28,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  final RoadmapService _roadmapService = RoadmapService();
+  // RoadmapService not used in this screen directly
   final MapController _mapController = MapController();
 
   LatLng _currentLocation = const LatLng(0, 0);
@@ -40,17 +42,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _getCurrentLocation();
   }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _loadSessions(); // reload sessions whenever app is resumed
     }
   }
+
   Future<void> _loadSessions() async {
     final list = LocalStorageService.getAllSessions();
     setState(() => _sessions = list.reversed.toList()); // latest first
@@ -59,7 +64,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _getCurrentLocation() async {
     try {
       final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.bestForNavigation);
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+        ),
+      );
       if (mounted) {
         setState(() {
           _currentLocation = LatLng(pos.latitude, pos.longitude);
@@ -87,16 +95,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _openUploadScreen() async {
     final pending = _sessions.where((s) => s.pendingUpload).toList();
     if (pending.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('No pending sessions')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No pending sessions')));
       return;
     }
 
     final success = await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => UploadScreen(sessions: pending),
-      ),
+      MaterialPageRoute(builder: (_) => UploadScreen(sessions: pending)),
     );
 
     if (success == true) {
@@ -125,7 +132,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // Mini map
               _loadingLocation
                   ? const SizedBox(
-                      height: 150, child: Center(child: CircularProgressIndicator()))
+                      height: 150,
+                      child: Center(child: CircularProgressIndicator()),
+                    )
                   : MiniMapWidget(
                       mapController: _mapController,
                       currentLocation: _currentLocation,
@@ -135,7 +144,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
 
               const SizedBox(height: 12),
+              // Upload summary compact panel
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _UploadSummaryPanel(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const UploadManagerScreen(),
+                    ),
+                  ),
+                ),
+              ),
+
               const Divider(),
+
               // Action buttons
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -152,7 +175,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => DetectionScreen(cameras: widget.cameras),
+                            builder: (_) =>
+                                DetectionScreen(cameras: widget.cameras),
                           ),
                         ).then((_) => _loadSessions());
                       },
@@ -170,15 +194,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 padding: EdgeInsets.all(8),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('Cached Sessions',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'Cached Sessions',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
 
               ..._sessions.map(
                 (s) => SessionTile(
                   session: s,
-                  onTap: ()  {
+                  onTap: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -194,6 +220,64 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
 
               const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UploadSummaryPanel extends StatefulWidget {
+  final VoidCallback onTap;
+  const _UploadSummaryPanel({required this.onTap});
+
+  @override
+  State<_UploadSummaryPanel> createState() => _UploadSummaryPanelState();
+}
+
+class _UploadSummaryPanelState extends State<_UploadSummaryPanel> {
+  final UploadManager _manager = UploadManager();
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = _manager.localSessions.length;
+    final uploaded = _manager.localSessions
+        .where((s) => _manager.statusFor(s) == UploadStatus.uploaded)
+        .length;
+    final pending = total - uploaded;
+
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: widget.onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              const Icon(Icons.cloud_upload, size: 36),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Uploads',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text('$uploaded uploaded • $pending pending'),
+                  ],
+                ),
+              ),
+              ElevatedButton(
+                onPressed: widget.onTap,
+                child: const Text('Manage'),
+              ),
             ],
           ),
         ),
