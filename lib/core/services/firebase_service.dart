@@ -5,63 +5,80 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import '../models/pothole_entry.dart';
+import 'upload_metadata_service.dart';
 import '../models/session_model.dart';
 import 'cloudinary_service.dart';
 
 class FirebaseService {
+  static final FirebaseService _instance = FirebaseService._internal();
+  factory FirebaseService() => _instance;
+  FirebaseService._internal() {
+    _queueBox = _openQueueBox();
+    _monitorConnectivity();
+  }
+
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final String _queueBoxName = 'upload_queue';
   late final Future<Box<SessionModel>> _queueBox;
   final CloudinaryService _cloudinaryService = CloudinaryService();
 
-  FirebaseService() {
-    // Open Hive box and start connectivity monitoring
-    _queueBox = _openQueueBox();
-    _monitorConnectivity();
-  }
+  bool _isUploading = false;
 
   Future<Box<SessionModel>> _openQueueBox() async {
     final box = await Hive.openBox<SessionModel>(_queueBoxName);
-    await _uploadPendingSessions(); 
+    await _uploadPendingSessions();
     return box;
   }
 
-  // Connectivity listener
   void _monitorConnectivity() {
-    Connectivity().onConnectivityChanged.listen((status) async {
-      if (status != ConnectivityResult.none) {
+    Connectivity().onConnectivityChanged.listen((dynamic status) async {
+      ConnectivityResult current;
+      if (status is List &&
+          status.isNotEmpty &&
+          status.first is ConnectivityResult) {
+        current = status.first as ConnectivityResult;
+      } else if (status is ConnectivityResult) {
+        current = status;
+      } else {
+        // Unknown payload; conservatively assume connected.
+        current = ConnectivityResult.mobile;
+      }
+
+      if (current != ConnectivityResult.none) {
         await _uploadPendingSessions();
       }
     });
   }
 
-  // Show feedback snackbar
-  void _showSnackBar(BuildContext context, String message,
-      {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: isError ? Colors.red : Colors.green,
-      duration: const Duration(seconds: 2),
-      behavior: SnackBarBehavior.floating,
-    ));
+  void _showSnackBar(
+    BuildContext context,
+    String message, {
+    bool isError = false,
+  }) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.green,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
-  // Queue a session for offline upload
-  Future<void> queueSession(SessionModel session, BuildContext context) async {
-    final box = await _queueBox;
-    await box.put(session.id, session);
-    _showSnackBar(context, "🟡 Session queued for upload: ${session.id}");
-    await _uploadPendingSessions(context: context);
-  }
-
-  // Upload a single session (metadata + entries + images)
-  Future<void> uploadSession(SessionModel session,
-    {BuildContext? context}) async {
+  Future<void> uploadSession(
+    SessionModel session, {
+    BuildContext? context,
+    void Function(String sessionId, int uploadedCount, int totalCount)?
+    onEntryUploaded,
+    bool Function()? shouldCancel,
+    bool Function()? shouldPause,
+  }) async {
     final sessionRef = _db.collection('sessions').doc(session.id);
 
     try {
-      // Upload session metadata
-      await sessionRef.set({
+      final sessionData = {
         'id': session.id,
         'createdAt': session.createdAt.toIso8601String(),
         'durationSeconds': session.durationSeconds,
@@ -70,79 +87,102 @@ class FirebaseService {
         'totalFramesProcessed': session.totalFramesProcessed,
         'gpsTrack': session.gpsTrack,
         'potholeSeverityCounts': session.potholeSeverityCounts,
-      });
+      };
 
-      // Upload entries
+      final batch = _db.batch();
+
+      batch.set(sessionRef, sessionData);
+
+      int uploadedCount = 0;
+      int skippedCount = 0;
+      final totalCount = session.entries.length;
+
       for (final entry in session.entries) {
-        String? imageUrl;
+        if (shouldCancel?.call() ?? false) break;
 
-        final entryRef = sessionRef.collection('entries').doc(entry.id);
-        final existingEntry = await entryRef.get();
+        while (shouldPause?.call() ?? false) {
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
 
-        // Delete old Cloudinary image if it exists
-        // if (existingEntry.exists) {
-        //   final oldUrl = existingEntry.data()?['imageUrl'] as String?;
-        //   if (oldUrl != null && oldUrl.isNotEmpty) {
-        //     await _cloudinaryService.deleteImage(oldUrl);
-        //   }
-        // }
+        String? imageUrl = entry.imageUrl;
 
-        // Upload new image if present
-        if (entry.imagePath != null && entry.imagePath.isNotEmpty) {
-          imageUrl = await _cloudinaryService.uploadImage(
-            entry.imagePath!,
+        // Only upload if image hasn't been uploaded before
+        if (entry.imagePath.isNotEmpty &&
+            (entry.imageUrl == null || entry.imageUrl!.isEmpty)) {
+          final uploadedUrl = await _cloudinaryService.uploadImage(
+            entry.imagePath,
             session.id,
           );
+
+          if (uploadedUrl == null) {
+            continue;
+          } else {
+            imageUrl = uploadedUrl;
+            uploadedCount++;
+          }
+        } else {
+          skippedCount++;
+          if (context != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '✅ Skipped duplicate: ${entry.imagePath.split('/').last}',
+                ),
+                backgroundColor: Colors.orange.shade700,
+                duration: const Duration(seconds: 1),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
         }
 
         final entryWithUrl = entry.copyWith(imageUrl: imageUrl);
+        final entryMap = entryWithUrl.toMap();
 
-        // Save entry under session
-        await entryRef.set(entryWithUrl.toMap());
+        final entryRef = sessionRef.collection('entries').doc(entry.id);
+        batch.set(entryRef, entryMap);
 
-        // Save entry globally
-        await _db.collection('pothole_entries').doc(entry.id).set({
-          ...entryWithUrl.toMap(),
-          'sessionId': session.id,
-        });
+        final globalRef = _db.collection('pothole_entries').doc(entry.id);
+        batch.set(globalRef, {...entryMap, 'sessionId': session.id});
+
+        try {
+          onEntryUploaded?.call(
+            session.id,
+            uploadedCount + skippedCount,
+            totalCount,
+          );
+        } catch (_) {}
       }
 
+      await batch.commit();
+
       if (context != null) {
-        _showSnackBar(context, "✅ Session uploaded: ${session.id}");
+        final message =
+            "Session ${session.id} upload complete:\n"
+            "✅ Uploaded: $uploadedCount\n"
+            "⚠️ Skipped (duplicates): $skippedCount";
+
+        _showSnackBar(context, message, isError: false);
       }
-    } catch (e) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint("❌ Upload error for ${session.id}: $e\n$st");
       if (context != null) {
-        _showSnackBar(context, "❌ Failed to upload session: ${session.id}",
-            isError: true);
+        _showSnackBar(
+          context,
+          "❌ Failed to upload session: ${session.id}",
+          isError: true,
+        );
       }
       rethrow;
     }
   }
 
-  // Upload multiple sessions
-  Future<void> uploadMultipleSessions(List<SessionModel> sessions,
-    {BuildContext? context}) async {
+  Future<void> uploadMultipleSessions(
+    List<SessionModel> sessions, {
+    BuildContext? context,
+  }) async {
     for (final session in sessions) {
       try {
-        // Fetch existing entries for this session from Firestore
-        final sessionRef = _db.collection('sessions').doc(session.id);
-        final existingEntriesSnapshot = await sessionRef.collection('entries').get();
-
-        // Map existing entryId -> imageUrl
-        final existingImages = {
-          for (var doc in existingEntriesSnapshot.docs)
-            doc.id: (doc.data()['imageUrl'] as String?) ?? ''
-        };
-
-        // Delete old Cloudinary images if the entry is being overwritten
-        // for (final entry in session.entries) {
-        //   final oldUrl = existingImages[entry.id];
-        //   if (oldUrl != null && oldUrl.isNotEmpty) {
-        //     await _cloudinaryService.deleteImage(oldUrl);
-        //   }
-        // }
-
-        // Now upload this session normally
         await uploadSession(session, context: context);
       } catch (e) {
         if (context != null) {
@@ -156,12 +196,17 @@ class FirebaseService {
     }
 
     if (context != null) {
-      _showSnackBar(context, "✅ Batch upload finished for ${sessions.length} sessions");
+      _showSnackBar(
+        context,
+        "✅ Batch upload finished for ${sessions.length} sessions",
+      );
     }
   }
 
-  // Upload pending sessions in queue
   Future<void> _uploadPendingSessions({BuildContext? context}) async {
+    if (_isUploading) return;
+    _isUploading = true;
+
     try {
       final box = await _queueBox;
       if (box.isEmpty) return;
@@ -172,24 +217,27 @@ class FirebaseService {
         try {
           await uploadSession(session, context: context);
           await box.delete(session.id);
-        } catch (e) {
+        } catch (_) {
           if (context != null) {
             _showSnackBar(
               context,
-              "❌ Failed to upload queued session: ${session.id}, will retry later",
+              "⚠️ Retrying later: ${session.id}",
               isError: true,
             );
           }
         }
       }
+
+      if (box.length > 100) await box.compact();
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint("❌ Error uploading pending sessions: $e\n$st");
       }
+    } finally {
+      _isUploading = false;
     }
   }
 
-  // Fetch all sessions
   Future<List<SessionModel>> fetchSessions() async {
     try {
       final snapshot = await _db.collection('sessions').get();
@@ -197,11 +245,11 @@ class FirebaseService {
           .map((doc) => SessionModel.fromMap(doc.data()))
           .toList();
     } catch (e) {
+      if (kDebugMode) debugPrint("⚠️ fetchSessions error: $e");
       return [];
     }
   }
 
-  // Fetch pothole entries for a session
   Future<List<PotholeEntry>> fetchEntriesForSession(String sessionId) async {
     try {
       final snapshot = await _db
@@ -213,7 +261,70 @@ class FirebaseService {
           .map((doc) => PotholeEntry.fromMap(doc.data()))
           .toList();
     } catch (e) {
+      if (kDebugMode) debugPrint("⚠️ fetchEntries error: $e");
       return [];
     }
+  }
+
+  Future<List<PotholeEntry>> fetchGlobalEntries() async {
+    try {
+      final snapshot = await _db.collection('pothole_entries').get();
+      return snapshot.docs
+          .map((doc) => PotholeEntry.fromMap(doc.data()))
+          .toList();
+    } catch (e, st) {
+      if (kDebugMode) debugPrint("⚠️ fetchGlobalEntries error: $e\n$st");
+      return [];
+    }
+  }
+
+  Future<String> _uploadImageWithRetries(
+    String path,
+    String sessionId,
+    String entryId, {
+    String? existingUrl, // pass current imageUrl
+  }) async {
+    if (existingUrl != null && existingUrl.isNotEmpty) {
+      if (kDebugMode) debugPrint('✅ Skipping upload, already uploaded: $path');
+      return existingUrl;
+    }
+
+    int attempt = 0;
+    while (true) {
+      try {
+        final url = await _cloudinaryService.uploadImage(path, sessionId);
+        if (url == null) throw Exception('Cloudinary returned null URL');
+
+        // On success, store in metadata
+        try {
+          await UploadMetadataService.clearMetadata(entryId);
+        } catch (_) {}
+
+        if (kDebugMode) debugPrint('⚡ Uploaded image: $path');
+        return url;
+      } catch (e) {
+        attempt++;
+        try {
+          await UploadMetadataService.incrementRetry(entryId);
+        } catch (_) {}
+
+        if (attempt >= 3) {
+          try {
+            await UploadMetadataService.setLastError(entryId, e.toString());
+          } catch (_) {}
+          rethrow;
+        }
+
+        await Future.delayed(Duration(milliseconds: 400 * (1 << attempt)));
+      }
+    }
+  }
+
+  Future<String> uploadSingleEntryImage({
+    required String entryId,
+    required String path,
+    required String sessionId,
+  }) async {
+    return await _uploadImageWithRetries(path, sessionId, entryId);
   }
 }
