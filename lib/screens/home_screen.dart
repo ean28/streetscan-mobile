@@ -1,4 +1,3 @@
-// lib/screens/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -6,14 +5,9 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:street_scan/screens/session_review_screen.dart';
 import 'package:street_scan/screens/upload_screen.dart';
-import 'package:street_scan/screens/upload_manager_screen.dart';
-
-import '../core/services/upload_manager.dart';
-// import 'package:flutter/foundation.dart';
 
 import '../core/services/local_storage_service.dart';
 import '../core/models/session_model.dart';
-
 import '../widgets/mini_map_widget.dart';
 import '../widgets/session_tile.dart';
 import 'fullscreen_map.dart';
@@ -28,7 +22,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  // RoadmapService not used in this screen directly
   final MapController _mapController = MapController();
 
   LatLng _currentLocation = const LatLng(0, 0);
@@ -58,7 +51,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _loadSessions() async {
     final list = LocalStorageService.getAllSessions();
-    setState(() => _sessions = list.reversed.toList()); // latest first
+    if (!mounted) return;
+    setState(() => _sessions = list.reversed.toList());
   }
 
   Future<void> _getCurrentLocation() async {
@@ -76,7 +70,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     } catch (e) {
       debugPrint('Failed to get current location: $e');
-      setState(() => _loadingLocation = false);
+      if (mounted) setState(() => _loadingLocation = false);
     }
   }
 
@@ -143,20 +137,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       onFullScreenTap: _openFullScreenMap,
                     ),
 
-              const SizedBox(height: 12),
-              // Upload summary compact panel
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: _UploadSummaryPanel(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const UploadManagerScreen(),
-                    ),
-                  ),
-                ),
-              ),
-
               const Divider(),
 
               // Action buttons
@@ -168,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ElevatedButton.icon(
                       onPressed: _openUploadScreen,
                       icon: const Icon(Icons.cloud_upload),
-                      label: const Text('Upload Pending'),
+                      label: const Text('Upload All'),
                     ),
                     ElevatedButton.icon(
                       onPressed: () {
@@ -220,64 +200,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
 
               const SizedBox(height: 40),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _UploadSummaryPanel extends StatefulWidget {
-  final VoidCallback onTap;
-  const _UploadSummaryPanel({required this.onTap});
-
-  @override
-  State<_UploadSummaryPanel> createState() => _UploadSummaryPanelState();
-}
-
-class _UploadSummaryPanelState extends State<_UploadSummaryPanel> {
-  final UploadManager _manager = UploadManager();
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final total = _manager.localSessions.length;
-    final uploaded = _manager.localSessions
-        .where((s) => _manager.statusFor(s) == UploadStatus.uploaded)
-        .length;
-    final pending = total - uploaded;
-
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        onTap: widget.onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const Icon(Icons.cloud_upload, size: 36),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Uploads',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    Text('$uploaded uploaded • $pending pending'),
-                  ],
-                ),
-              ),
-              ElevatedButton(
-                onPressed: widget.onTap,
-                child: const Text('Manage'),
-              ),
             ],
           ),
         ),

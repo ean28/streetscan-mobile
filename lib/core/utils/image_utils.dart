@@ -1,11 +1,14 @@
-// lib/core/utils/image_utils.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path/path.dart' as p;
 
-Future<File> compressAndSave(File src, String destPath,
-    {int maxDim = 1280, int quality = 82}) async {
+Future<File> compressAndSave(
+  File src,
+  String destPath, {
+  int maxDim = 1280,
+  int quality = 82,
+}) async {
   final lastSeg = p.basename(destPath);
   final destDir = p.dirname(destPath);
   final tmpOut = '$destDir/_tmp_$lastSeg';
@@ -31,7 +34,6 @@ Future<File> compressAndSave(File src, String destPath,
   return saved;
 }
 
-/// Loads an image widget safely from a file path, with a fallback icon.
 Widget loadImage(String path, {double size = 80, BoxFit fit = BoxFit.cover}) {
   return FutureBuilder<bool>(
     future: File(path).exists(),
@@ -44,12 +46,7 @@ Widget loadImage(String path, {double size = 80, BoxFit fit = BoxFit.cover}) {
         );
       }
       if (snapshot.hasData && snapshot.data == true) {
-        return Image.file(
-          File(path),
-          width: size,
-          height: size,
-          fit: fit,
-        );
+        return Image.file(File(path), width: size, height: size, fit: fit);
       }
       return Container(
         width: size,

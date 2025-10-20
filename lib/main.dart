@@ -4,10 +4,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:street_scan/core/services/local_storage_service.dart';
+import 'package:street_scan/screens/upload_manager_screen.dart';
 import 'core/services/upload_metadata_service.dart';
 
 import 'screens/main_screen.dart';
-import 'screens/upload_home_screen.dart';
 import 'package:provider/provider.dart';
 import 'core/services/upload_manager.dart';
 import 'core/services/notification_service.dart';
@@ -90,7 +90,7 @@ class _MainAppState extends State<MainApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: widget.navigatorKey,
-      routes: {'/upload_home': (_) => const UploadHomeScreen()},
+      routes: {'/upload_home': (_) => const UploadManagerScreen()},
       title: 'Street Scan',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

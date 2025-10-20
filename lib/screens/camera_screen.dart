@@ -34,7 +34,7 @@ class _CameraScreenState extends State<CameraScreen> {
   final ScrollController _scrollController = ScrollController();
   CameraController? _cameraController;
   bool _isRecording = false;
-  int _durationSeconds = 0;
+  final int _durationSeconds = 0;
   Timer? _gpsTimer;
   Duration _elapsed = Duration.zero;
   Timer? _elapsedTimer;
@@ -58,13 +58,15 @@ class _CameraScreenState extends State<CameraScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Permissions required. Please enable them in Settings.'),
+            content: const Text(
+              'Permissions required. Please enable them in Settings.',
+            ),
             action: SnackBarAction(
               label: 'Open Settings',
               onPressed: openAppSettings, // from permission_handler
             ),
-      ),
-    );
+          ),
+        );
       }
       return; // ⛔ Stop initialization
     }
@@ -108,7 +110,10 @@ class _CameraScreenState extends State<CameraScreen> {
       Permission.microphone, // 🎤 needed for video recording with audio
       Permission.locationWhenInUse,
       Permission.accessMediaLocation,
-      if (Platform.isAndroid) Permission.manageExternalStorage else Permission.photosAddOnly,
+      if (Platform.isAndroid)
+        Permission.manageExternalStorage
+      else
+        Permission.photosAddOnly,
       if (Platform.isAndroid) Permission.locationAlways,
     ].request();
 
@@ -134,16 +139,21 @@ class _CameraScreenState extends State<CameraScreen> {
         permission == LocationPermission.deniedForever) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Location permission is required for GPS logging")),
+        const SnackBar(
+          content: Text("Location permission is required for GPS logging"),
+        ),
       );
     }
   }
+
   // GPS Logging
   Future<void> _startLogging() async {
     _gpsTimer ??= Timer.periodic(const Duration(seconds: 1), (_) async {
       try {
         final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.bestForNavigation,
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+          ),
         );
 
         if (pos.accuracy <= 40.0) {
@@ -156,7 +166,9 @@ class _CameraScreenState extends State<CameraScreen> {
 
           Future.delayed(const Duration(milliseconds: 50), () {
             if (_scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+              _scrollController.jumpTo(
+                _scrollController.position.maxScrollExtent,
+              );
             }
           });
         }
@@ -170,6 +182,7 @@ class _CameraScreenState extends State<CameraScreen> {
     _gpsTimer?.cancel();
     _gpsTimer = null;
   }
+
   // File & Folder Handling
   Future<String> _getSaveFolder() async {
     String defaultFolder;
@@ -188,7 +201,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> pickSaveFolder(TextEditingController controller) async {
     try {
-      final String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+      final String? selectedDirectory = await FilePicker.platform
+          .getDirectoryPath();
       if (selectedDirectory != null) {
         controller.text = selectedDirectory;
         folderPath = selectedDirectory;
@@ -197,14 +211,19 @@ class _CameraScreenState extends State<CameraScreen> {
     } catch (e) {
       if (kDebugMode) debugPrint('pickSaveFolder error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot pick folder')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Cannot pick folder')));
       }
     }
   }
 
   Future<void> _saveGpsCsv(String baseName, String folder) async {
     final file = File('$folder/$baseName.csv');
-    final content = ['timestamp,latitude,longitude,accuracy', ..._gpsLogs].join('\n');
+    final content = [
+      'timestamp,latitude,longitude,accuracy',
+      ..._gpsLogs,
+    ].join('\n');
     try {
       await file.writeAsString(content);
     } catch (e) {
@@ -223,13 +242,19 @@ class _CameraScreenState extends State<CameraScreen> {
     if (!await _checkAllPermissions()) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Camera/Location/Storage permissions required')),
+        const SnackBar(
+          content: Text('Camera/Location/Storage permissions required'),
+        ),
       );
       await _requestEssentialPermissions();
       return;
     }
 
-    if (_cameraController == null || !_cameraController!.value.isInitialized || _isRecording) return;
+    if (_cameraController == null ||
+        !_cameraController!.value.isInitialized ||
+        _isRecording) {
+      return;
+    }
 
     try {
       if (_cameraController!.value.isStreamingImages) {
@@ -260,14 +285,19 @@ class _CameraScreenState extends State<CameraScreen> {
       _elapsedTimer = null;
 
       final baseName = _generateTimestampBaseName();
-      final folder = folderPath.isNotEmpty ? folderPath : await _getSaveFolder();
+      final folder = folderPath.isNotEmpty
+          ? folderPath
+          : await _getSaveFolder();
       final videoPath = '$folder/$baseName.mp4';
 
       final XFile recorded = await _cameraController!.stopVideoRecording();
       await recorded.saveTo(videoPath);
 
       if (Platform.isAndroid) {
-        await ImageGallerySaverPlus.saveFile(videoPath, isReturnPathOfIOS: false);
+        await ImageGallerySaverPlus.saveFile(
+          videoPath,
+          isReturnPathOfIOS: false,
+        );
       }
 
       await _saveGpsCsv(baseName, folder);
@@ -277,7 +307,9 @@ class _CameraScreenState extends State<CameraScreen> {
         _isRecording = false;
         _elapsed = Duration.zero;
       });
-      if (kDebugMode) debugPrint('Saved video: $videoPath and CSV to same folder');
+      if (kDebugMode) {
+        debugPrint('Saved video: $videoPath and CSV to same folder');
+      }
     } catch (e) {
       if (kDebugMode) debugPrint('Stop recording error: $e');
       setState(() => _isRecording = false);
@@ -360,7 +392,9 @@ class _CameraScreenState extends State<CameraScreen> {
                         TextField(
                           controller: customFolderController,
                           decoration: InputDecoration(
-                            labelText: folderPath.isEmpty ? 'Default path in app media' : folderPath,
+                            labelText: folderPath.isEmpty
+                                ? 'Default path in app media'
+                                : folderPath,
                             border: const OutlineInputBorder(),
                             isDense: true,
                             suffixIcon: IconButton(
@@ -445,7 +479,12 @@ class _CameraScreenState extends State<CameraScreen> {
             children: [
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color.fromARGB(255, 255, 255, 255).withOpacity(0.8),
+                  backgroundColor: const Color.fromARGB(
+                    255,
+                    255,
+                    255,
+                    255,
+                  ).withAlpha((0.8 * 255).round()),
                   shape: const CircleBorder(),
                   padding: const EdgeInsets.all(20),
                 ),
@@ -478,22 +517,32 @@ class _CameraScreenState extends State<CameraScreen> {
                 onPressed: () async {
                   if (!await _checkAllPermissions()) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Storage permission required')),
+                      const SnackBar(
+                        content: Text('Storage permission required'),
+                      ),
                     );
                     await _requestEssentialPermissions();
                     return;
                   }
                   try {
-                    final folderToOpen = folderPath.isNotEmpty ? folderPath : await _getSaveFolder();
+                    final folderToOpen = folderPath.isNotEmpty
+                        ? folderPath
+                        : await _getSaveFolder();
                     await OpenFilex.open(folderToOpen);
                   } catch (e) {
                     if (kDebugMode) debugPrint('Failed to open folder: $e');
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot open folder')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Cannot open folder')),
+                      );
                     }
                   }
                 },
-                child: const Icon(Icons.folder_open, color: Colors.white, size: 40),
+                child: const Icon(
+                  Icons.folder_open,
+                  color: Colors.white,
+                  size: 40,
+                ),
               ),
             ],
           ),
@@ -523,8 +572,17 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
             ),
           ),
-          Positioned(top: 10, left: 12, child: TopBackButton(onPressed:() => Navigator.pop(context),)),
-          Positioned(top: 20, left: 0, right: 0, child: SessionTimer(durationSeconds: _durationSeconds)),
+          Positioned(
+            top: 10,
+            left: 12,
+            child: TopBackButton(onPressed: () => Navigator.pop(context)),
+          ),
+          Positioned(
+            top: 20,
+            left: 0,
+            right: 0,
+            child: SessionTimer(durationSeconds: _durationSeconds),
+          ),
           _settingsButton(customFolderController),
           _bottomControls(),
         ],

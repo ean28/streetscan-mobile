@@ -3,8 +3,6 @@ import '../detection/detection.dart';
 import 'package:geolocator/geolocator.dart';
 
 extension DetectionToEntry on Detection {
-  /// Converts a Detection to a PotholeEntry.
-  /// Required: [imagePath], [position], [sessionId], [deviceModel].
   PotholeEntry toPotholeEntry({
     required String imagePath,
     required Position position,

@@ -1,16 +1,15 @@
 import 'dart:ui';
 
 class Detection {
-  final Rect box;           // Bounding box in original image coordinates
-  final double confidence;  // Confidence score (0–1)
-  final int classId;        // YOLO class index
-  final String label;       // Human-readable label
-  final int? inferenceTime; // Inference time in ms
+  final Rect box;
+  final double confidence;
+  final int classId;
+  final String label;
+  final int? inferenceTime;
 
-  // Letterbox info for remapping
-  final double letterboxScale; // Scale used to resize original -> model input
-  final double letterboxDx;    // Horizontal padding (pixels)
-  final double letterboxDy;    // Vertical padding (pixels)
+  final double letterboxScale;
+  final double letterboxDx;
+  final double letterboxDy;
 
   Detection({
     required this.box,
@@ -21,9 +20,10 @@ class Detection {
     required this.letterboxScale,
     required this.letterboxDx,
     required this.letterboxDy,
-  }) : assert(box.left >= 0 && box.top >= 0 && box.right >= 0 && box.bottom >= 0);
+  }) : assert(
+         box.left >= 0 && box.top >= 0 && box.right >= 0 && box.bottom >= 0,
+       );
 
-  /// Remap box back to model/padded input coordinates
   Rect remapToModelInput() {
     final double x1 = box.left * letterboxScale + letterboxDx;
     final double y1 = box.top * letterboxScale + letterboxDy;

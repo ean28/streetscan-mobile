@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:street_scan/screens/assessmodel_screen.dart';
+import 'package:street_scan/screens/upload_manager_screen.dart';
 
 import 'home_screen.dart';
 import 'camera_screen.dart';
@@ -22,9 +23,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: _selectedIndex == 0
-          ? HomeScreen(
-              cameras: widget.cameras,
-            )
+          ? HomeScreen(cameras: widget.cameras)
           : Container(), // other screens are pushed, not in tabs
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
@@ -47,20 +46,33 @@ class _MainScreenState extends State<MainScreen> {
                 builder: (_) => DetectionScreen(cameras: widget.cameras),
               ),
             );
-          } else if (index == 3){
+          } else if (index == 3) {
             Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => AssessModelScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const UploadManagerScreen()),
+            );
+          } else if (index == 4) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AssessModelScreen()),
             );
           }
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
           BottomNavigationBarItem(icon: Icon(Icons.videocam), label: "Video"),
-          BottomNavigationBarItem(icon: Icon(Icons.photo_camera), label: "Detect"),
-          BottomNavigationBarItem(icon: Icon(Icons.handyman), label: "Assess Model"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.photo_camera),
+            label: "Detect",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.cloud_upload),
+            label: "Uploads",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.handyman),
+            label: "Assess Model",
+          ),
         ],
       ),
     );

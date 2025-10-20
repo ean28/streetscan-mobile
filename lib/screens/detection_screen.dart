@@ -42,11 +42,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
   final List<Map<String, double>> _gpsLog = [];
   DateTime? _lastSnapshotTime;
 
-  InferenceBackend _selectedBackend = InferenceBackend.cpu;
-
   // new tracking variables
   List<Detection> _lastDetections = [];
-  int _lastDetectionLatency = 0; 
+  int _lastDetectionLatency = 0;
   int _totalFrames = 0;
   int _totalLatencyMs = 0;
   int _lastInferenceMs = 0;
@@ -67,32 +65,31 @@ class _DetectionScreenState extends State<DetectionScreen> {
     _requestEssentialPermissions();
     _processSnapshotQueue();
 
-  //detection pipeline
-  _pipeline = PotholeDetectionPipeline(
-    snapshotEveryFrame: false,
-    onDetection: (detections, detectionMs, inferenceMs) {
-      if (!mounted) return;
-      setState(() {
-        _lastDetections = detections;
-        _lastDetectionLatency = detectionMs;
-        _totalFrames = _pipeline.totalFrames;
-        _totalLatencyMs = _pipeline.totalDetectionMs;
-        _lastInferenceMs = inferenceMs;
-      });
+    //detection pipeline
+    _pipeline = PotholeDetectionPipeline(
+      snapshotEveryFrame: false,
+      onDetection: (detections, detectionMs, inferenceMs) {
+        if (!mounted) return;
+        setState(() {
+          _lastDetections = detections;
+          _lastDetectionLatency = detectionMs;
+          _totalFrames = _pipeline.totalFrames;
+          _totalLatencyMs = _pipeline.totalDetectionMs;
+          _lastInferenceMs = inferenceMs;
+        });
 
-      if (_detecting && detections.isNotEmpty) {
-        _snapshotQueue.add(null); // trigger snapshot
-      }
-    },
-    onModelLoaded: () {
-      if (mounted) setState(() => _modelLoaded = true);
-    },
-    onDetectionMs: (detectionMs) {
-      if (mounted) setState(() => _lastDetectionLatency = detectionMs);
-    },
-  );
-  _pipeline.init();
-
+        if (_detecting && detections.isNotEmpty) {
+          _snapshotQueue.add(null); // trigger snapshot
+        }
+      },
+      onModelLoaded: () {
+        if (mounted) setState(() => _modelLoaded = true);
+      },
+      onDetectionMs: (detectionMs) {
+        if (mounted) setState(() => _lastDetectionLatency = detectionMs);
+      },
+    );
+    _pipeline.init();
   }
 
   Future<void> _loadDeviceModel() async {
@@ -115,9 +112,10 @@ class _DetectionScreenState extends State<DetectionScreen> {
       if (kDebugMode) debugPrint("Device model load error: $e\n$st");
     }
   }
+
   Future<void> _processSnapshotQueue() async {
     _snapshotQueue.stream.asyncMap((_) => _maybeSnapshot()).listen((_) {});
-    }
+  }
 
   Future<void> _enterFullScreen() async {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -138,7 +136,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
           builder: (c) => AlertDialog(
             title: const Text("Permissions Required"),
             content: const Text(
-                "Camera and Location permissions are required. Please enable them in Settings."),
+              "Camera and Location permissions are required. Please enable them in Settings.",
+            ),
             actions: [
               TextButton(
                 onPressed: () async {
@@ -175,10 +174,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
       await _cameraController!.setExposureMode(ExposureMode.auto);
       await _cameraController!.setFocusMode(FocusMode.auto);
-      if(!mounted) return;
+      if (!mounted) return;
       setState(() {});
       _startImageStream();
-
     } catch (e, st) {
       if (kDebugMode) debugPrint('Camera init error: $e\n$st');
     }
@@ -191,14 +189,18 @@ class _DetectionScreenState extends State<DetectionScreen> {
     }
 
     _cameraController!.startImageStream((CameraImage image) {
-      final shouldProcessFrame = _detecting || _overlayMode == OverlayMode.alwaysOn;
+      final shouldProcessFrame =
+          _detecting || _overlayMode == OverlayMode.alwaysOn;
       if (!shouldProcessFrame) return;
 
       _pipeline.addFrame(image); // send frame to iso pipeline
     });
   }
 
-  Future<void> _maybeSnapshot({int minIntervalMs = 400, bool compress = true}) async {
+  Future<void> _maybeSnapshot({
+    int minIntervalMs = 400,
+    bool compress = true,
+  }) async {
     final now = DateTime.now();
     if (_lastSnapshotTime != null &&
         now.difference(_lastSnapshotTime!).inMilliseconds < minIntervalMs) {
@@ -209,26 +211,41 @@ class _DetectionScreenState extends State<DetectionScreen> {
   }
 
   Future<void> _snapshotPothole({bool compress = true}) async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
-    if (_currentSession == null) await _startSession();
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+    if (_currentSession == null) {
+      await _startSession();
+    }
 
     try {
       final XFile file = await _cameraController!.takePicture();
       final now = DateTime.now();
-      final baseName = 'StreetScan_${now.toIso8601String().replaceAll(":", "-")}.jpg';
+      final baseName =
+          'StreetScan_${now.toIso8601String().replaceAll(":", "-")}.jpg';
 
       final sessionsDir = await LocalStorageService.sessionsDir();
       final sessionId = _currentSession!.id;
       final sessionFolder = Directory('$sessionsDir/$sessionId/images');
-      if (!await sessionFolder.exists()) await sessionFolder.create(recursive: true);
+      if (!await sessionFolder.exists()) {
+        await sessionFolder.create(recursive: true);
+      }
       final destPath = '${sessionFolder.path}/$baseName';
 
       final File savedFile = compress
-          ? await compressAndSave(File(file.path), destPath, maxDim: 1280, quality: 82)
+          ? await compressAndSave(
+              File(file.path),
+              destPath,
+              maxDim: 1280,
+              quality: 82,
+            )
           : await File(file.path).copy(destPath);
 
       final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.bestForNavigation);
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+        ),
+      );
 
       for (final detection in _lastDetections) {
         final entry = PotholeEntry(
@@ -249,20 +266,24 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
       // Update session stats
       _currentSession!.totalFramesProcessed = _totalFrames;
-      _currentSession!.averageLatency =
-          _totalFrames > 0 ? _totalLatencyMs / _totalFrames : 0;
+      _currentSession!.averageLatency = _totalFrames > 0
+          ? _totalLatencyMs / _totalFrames
+          : 0;
       _currentSession!.gpsTrack = _gpsLog.cast<Map<String, double>>();
       await LocalStorageService.saveSession(_currentSession!);
 
       if (kDebugMode) {
         debugPrint(
-            'Saved pothole ${savedFile.path} at ${pos.latitude},${pos.longitude}');
+          'Saved pothole ${savedFile.path} at ${pos.latitude},${pos.longitude}',
+        );
       }
       if (mounted) setState(() {});
     } catch (e) {
       if (kDebugMode) debugPrint('Snapshot error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Snapshot failed: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Snapshot failed: $e')));
       }
     }
   }
@@ -273,12 +294,16 @@ class _DetectionScreenState extends State<DetectionScreen> {
     _gpsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       try {
         final pos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.bestForNavigation);
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+          ),
+        );
         _gpsLog.add({
           'lat': pos.latitude,
           'lng': pos.longitude,
           'acc': pos.accuracy,
-          'ts': DateTime.now().millisecondsSinceEpoch.toDouble(), // keep time too
+          'ts': DateTime.now().millisecondsSinceEpoch
+              .toDouble(), // keep time too
         });
       } catch (e) {
         if (kDebugMode) debugPrint('GPS log error: $e');
@@ -329,15 +354,17 @@ class _DetectionScreenState extends State<DetectionScreen> {
     await _stopGpsLogging();
     if (mounted) {
       setState(() {
-      _detecting = false;
-      _durationSeconds = 0;
-    });
+        _detecting = false;
+        _durationSeconds = 0;
+      });
     }
 
     if (_currentSession == null || _currentSession!.count == 0) {
       if (_currentSession != null) {
-        await LocalStorageService.deleteSession(_currentSession!.id,
-            deleteFiles: false);
+        await LocalStorageService.deleteSession(
+          _currentSession!.id,
+          deleteFiles: false,
+        );
       }
       _currentSession = null;
       if (mounted) setState(() {});
@@ -346,8 +373,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
     // finalize session stats
     _currentSession!.totalFramesProcessed = _totalFrames;
-    _currentSession!.averageLatency =
-        _totalFrames > 0 ? _totalLatencyMs / _totalFrames : 0;
+    _currentSession!.averageLatency = _totalFrames > 0
+        ? _totalLatencyMs / _totalFrames
+        : 0;
     _currentSession!.gpsTrack = _gpsLog.cast<Map<String, double>>();
     await LocalStorageService.saveSession(_currentSession!);
 
@@ -358,11 +386,13 @@ class _DetectionScreenState extends State<DetectionScreen> {
         content: const Text('Review now or save for later?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Save for later')),
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Save for later'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Review now')),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Review now'),
+          ),
         ],
       ),
     );
@@ -371,7 +401,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-            builder: (_) => SessionReviewScreen(session: _currentSession!)),
+          builder: (_) => SessionReviewScreen(session: _currentSession!),
+        ),
       );
     }
 
@@ -397,34 +428,34 @@ class _DetectionScreenState extends State<DetectionScreen> {
       (_overlayMode == OverlayMode.sessionOnly && _detecting);
 
   Widget _gpsPreview() => Container(
-        height: 120,
-        color: Colors.black54,
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              _currentSession == null
-                  ? 'No session'
-                  : 'Session ${_currentSession!.id} - ${_currentSession!.count} potholes detected.',
-              style: const TextStyle(color: Colors.white),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Frames sent: $_totalFrames',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            Text(
-              'Pipeline Detection latency: ${_lastDetections.isNotEmpty ? _lastDetectionLatency : "-"} ms',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            Text(
-              'Model Inference Time: ${_lastDetections.isNotEmpty ? _lastInferenceMs : "-"} ms',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            )
-          ],
+    height: 120,
+    color: Colors.black54,
+    alignment: Alignment.center,
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          _currentSession == null
+              ? 'No session'
+              : 'Session ${_currentSession!.id} - ${_currentSession!.count} potholes detected.',
+          style: const TextStyle(color: Colors.white),
         ),
-      );
+        const SizedBox(height: 4),
+        Text(
+          'Frames sent: $_totalFrames',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        Text(
+          'Pipeline Detection latency: ${_lastDetections.isNotEmpty ? _lastDetectionLatency : "-"} ms',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        Text(
+          'Model Inference Time: ${_lastDetections.isNotEmpty ? _lastInferenceMs : "-"} ms',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+      ],
+    ),
+  );
 
   Widget _controls() => Center(
     child: Column(
@@ -433,7 +464,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor: _modelLoaded
-                ? (_detecting ? Colors.redAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8))
+                ? (_detecting
+                      ? Colors.redAccent.withAlpha((0.8 * 255).round())
+                      : Colors.green.withAlpha((0.8 * 255).round()))
                 : Colors.grey, // greyed out if model not loaded
             shape: const CircleBorder(),
             padding: const EdgeInsets.all(32),
@@ -464,21 +497,21 @@ class _DetectionScreenState extends State<DetectionScreen> {
   );
 
   Widget _settingsButton() => DetectionScreenSettings(
-        isDetectionActive: _detecting,
-        onToggleDetection: () {
-          if (_detecting) {
-            _endSession();
-          } else {
-            _startSession();
-          }
-        },
-        onOpenSettings: () {}, 
-        onOverlayModeChanged: (mode) {
-          setState(() {
-            _overlayMode = mode;
-          });
-        },
-      );
+    isDetectionActive: _detecting,
+    onToggleDetection: () {
+      if (_detecting) {
+        _endSession();
+      } else {
+        _startSession();
+      }
+    },
+    onOpenSettings: () {},
+    onOverlayModeChanged: (mode) {
+      setState(() {
+        _overlayMode = mode;
+      });
+    },
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -494,7 +527,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
               fit: BoxFit.cover,
               alignment: Alignment.center,
               child: SizedBox(
-                width: _cameraController!.value.previewSize!.height, 
+                width: _cameraController!.value.previewSize!.height,
                 height: _cameraController!.value.previewSize!.width,
                 child: CameraPreview(_cameraController!),
               ),
@@ -506,13 +539,23 @@ class _DetectionScreenState extends State<DetectionScreen> {
                 painter: DetectionPainter(
                   _lastDetections,
                   Size(
-                    _cameraController!.value.previewSize!.width, 
-                    _cameraController!.value.previewSize!.height),
+                    _cameraController!.value.previewSize!.width,
+                    _cameraController!.value.previewSize!.height,
+                  ),
                 ),
               ),
             ),
-          Positioned(top: 20, left: 0, right: 0, child: SessionTimer(durationSeconds: _durationSeconds)),
-          Positioned(top: 10, left: 12, child: TopBackButton(onPressed: () => Navigator.pop(context))),
+          Positioned(
+            top: 20,
+            left: 0,
+            right: 0,
+            child: SessionTimer(durationSeconds: _durationSeconds),
+          ),
+          Positioned(
+            top: 10,
+            left: 12,
+            child: TopBackButton(onPressed: () => Navigator.pop(context)),
+          ),
           Positioned(top: 10, right: 12, child: _settingsButton()),
           Positioned(bottom: 150, left: 20, right: 20, child: _gpsPreview()),
           Positioned(bottom: 40, left: 0, right: 0, child: _controls()),

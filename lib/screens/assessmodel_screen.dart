@@ -1,5 +1,4 @@
 // lib/screens/assessmodel_screen.dart
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
@@ -46,7 +45,6 @@ class _AssessModelScreenState extends State<AssessModelScreen> {
     });
 
     try {
-      // Load chosen image
       final bytes = await rootBundle.load(assetPath);
       final decoded = img.decodeImage(bytes.buffer.asUint8List());
       if (decoded == null) throw Exception("Failed to decode test image.");
@@ -63,7 +61,6 @@ class _AssessModelScreenState extends State<AssessModelScreen> {
         rgbBytes[j + 2] = rgbaBytes[i + 2];
       }
 
-      // Ensure model is loaded
       await PotholeDetector.instance.loadModel();
 
       // Run inference
@@ -76,7 +73,6 @@ class _AssessModelScreenState extends State<AssessModelScreen> {
       // Cache the display bytes once
       _displayBytes = Uint8List.fromList(img.encodeJpg(decoded));
 
-      // Default model input size
       _modelInputW = 640;
       _modelInputH = 640;
 
@@ -104,10 +100,12 @@ class _AssessModelScreenState extends State<AssessModelScreen> {
               hint: const Text("Select test image"),
               value: _selectedImage,
               items: _assetImages
-                  .map((path) => DropdownMenuItem(
-                        value: path,
-                        child: Text(path.split('/').last),
-                      ))
+                  .map(
+                    (path) => DropdownMenuItem(
+                      value: path,
+                      child: Text(path.split('/').last),
+                    ),
+                  )
                   .toList(),
               onChanged: (val) {
                 if (val != null) {
@@ -128,95 +126,113 @@ class _AssessModelScreenState extends State<AssessModelScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _decoded == null || _displayBytes == null
-                    ? const Center(child: Text("No image loaded"))
-                    : Column(
-                        children: [
-                          // ==== IMAGE WITH BOXES ====
-                          Expanded(
-                            flex: 3,
-                            child: Center(
-                              child: FittedBox(
-                                child: SizedBox(
-                                  width: _decoded!.width.toDouble(),
-                                  height: _decoded!.height.toDouble(),
-                                  child: Stack(
-                                    children: [
-                                      Image.memory(_displayBytes!, fit: BoxFit.contain),
-                                      CustomPaint(
-                                        size: Size(
-                                          _decoded!.width.toDouble(),
-                                          _decoded!.height.toDouble(),
-                                        ),
-                                        painter: DetectionPainter(
-                                          _detections,
-                                          Size(
-                                            _decoded!.width.toDouble(),
-                                            _decoded!.height.toDouble(),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                ? const Center(child: Text("No image loaded"))
+                : Column(
+                    children: [
+                      // ==== IMAGE WITH BOXES ====
+                      Expanded(
+                        flex: 3,
+                        child: Center(
+                          child: FittedBox(
+                            child: SizedBox(
+                              width: _decoded!.width.toDouble(),
+                              height: _decoded!.height.toDouble(),
+                              child: Stack(
+                                children: [
+                                  Image.memory(
+                                    _displayBytes!,
+                                    fit: BoxFit.contain,
                                   ),
-                                ),
+                                  CustomPaint(
+                                    size: Size(
+                                      _decoded!.width.toDouble(),
+                                      _decoded!.height.toDouble(),
+                                    ),
+                                    painter: DetectionPainter(
+                                      _detections,
+                                      Size(
+                                        _decoded!.width.toDouble(),
+                                        _decoded!.height.toDouble(),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-
-                          const Divider(),
-
-                          // ==== INFO PREVIEW ====
-                          Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Column(
-                              children: [
-                                if (_origW != null && _origH != null)
-                                  Text("Input Image Size: $_origW × $_origH"),
-                                if (_modelInputW != null && _modelInputH != null)
-                                  Text("Model Input Size: $_modelInputW × $_modelInputH"),
-                                if (_origW != null && _origH != null)
-                                  Text("Mapped Output Size: $_origW × $_origH"),
-                                  Text("Inference Time: ${PotholeDetector.instance.lastInferenceMs ?? 0} ms"),
-                              ],
-                            ),
-                          ),
-
-                          // ==== DESCRIPTIVE LIST ====
-                          Expanded(
-                            flex: 2,
-                            child: _detections.isEmpty
-                                ? const Center(child: Text("No detections"))
-                                : ListView.builder(
-                                    itemCount: _detections.length,
-                                    itemBuilder: (context, index) {
-                                      final d = _detections[index];
-                                      return Card(
-                                        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(8.0),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                "Detection ${index + 1}",
-                                                style: const TextStyle(fontWeight: FontWeight.bold),
-                                              ),
-                                              Text("Label: ${d.label}"),
-                                              Text("Confidence: ${(d.confidence * 100).toStringAsFixed(1)}%"),
-                                              Text(
-                                                  "Bounding Box: left=${d.box.left.toStringAsFixed(1)}, "
-                                                  "top=${d.box.top.toStringAsFixed(1)}, "
-                                                  "right=${d.box.right.toStringAsFixed(1)}, "
-                                                  "bottom=${d.box.bottom.toStringAsFixed(1)}"),
-                                              Text("Inference Time: ${d.inferenceTime ?? 0} ms"),
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                          ),
-                        ],
+                        ),
                       ),
+
+                      const Divider(),
+
+                      // ==== INFO PREVIEW ====
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Column(
+                          children: [
+                            if (_origW != null && _origH != null)
+                              Text("Input Image Size: $_origW × $_origH"),
+                            if (_modelInputW != null && _modelInputH != null)
+                              Text(
+                                "Model Input Size: $_modelInputW × $_modelInputH",
+                              ),
+                            if (_origW != null && _origH != null)
+                              Text("Mapped Output Size: $_origW × $_origH"),
+                            Text(
+                              "Inference Time: ${PotholeDetector.instance.lastInferenceMs} ms",
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // ==== DESCRIPTIVE LIST ====
+                      Expanded(
+                        flex: 2,
+                        child: _detections.isEmpty
+                            ? const Center(child: Text("No detections"))
+                            : ListView.builder(
+                                itemCount: _detections.length,
+                                itemBuilder: (context, index) {
+                                  final d = _detections[index];
+                                  return Card(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 6,
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "Detection ${index + 1}",
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          Text("Label: ${d.label}"),
+                                          Text(
+                                            "Confidence: ${(d.confidence * 100).toStringAsFixed(1)}%",
+                                          ),
+                                          Text(
+                                            "Bounding Box: left=${d.box.left.toStringAsFixed(1)}, "
+                                            "top=${d.box.top.toStringAsFixed(1)}, "
+                                            "right=${d.box.right.toStringAsFixed(1)}, "
+                                            "bottom=${d.box.bottom.toStringAsFixed(1)}",
+                                          ),
+                                          Text(
+                                            "Inference Time: ${d.inferenceTime ?? 0} ms",
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
           ),
         ],
       ),

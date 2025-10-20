@@ -1,16 +1,14 @@
-// lib/core/detection/detection_painter.dart
 import 'package:flutter/material.dart';
 import 'detection.dart';
 
 class DetectionPainter extends CustomPainter {
   final List<Detection>? detections;
-  final Size imageSize; // raw camera size (from CameraImage or Controller)
+  final Size imageSize;
 
   DetectionPainter(this.detections, this.imageSize) {
     _initTextPainters();
   }
 
-  // Paint objects
   final Paint boxPaint = Paint()
     ..color = Colors.red
     ..style = PaintingStyle.stroke
@@ -24,7 +22,6 @@ class DetectionPainter extends CustomPainter {
     fontWeight: FontWeight.bold,
   );
 
-  // Pre-cached TextPainters keyed by "label + confidence"
   final Map<String, TextPainter> _textPainters = {};
 
   void _initTextPainters() {
@@ -45,12 +42,10 @@ class DetectionPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (detections == null || detections!.isEmpty) return;
 
-    // Scale to fit camera preview into canvas while preserving aspect ratio
     final scaleX = size.width / imageSize.width;
     final scaleY = size.height / imageSize.height;
     final scale = scaleX < scaleY ? scaleX : scaleY;
 
-    // Letterbox offsets
     final dx = (size.width - imageSize.width * scale) / 2;
     final dy = (size.height - imageSize.height * scale) / 2;
 
@@ -62,7 +57,6 @@ class DetectionPainter extends CustomPainter {
         det.box.bottom * scale + dy,
       );
 
-      // Draw bounding box
       canvas.drawRect(rect, boxPaint);
 
       final key = '${det.label} ${(det.confidence * 100).toStringAsFixed(1)}%';
@@ -74,11 +68,14 @@ class DetectionPainter extends CustomPainter {
           (rect.top - tp.height - 2).clamp(0.0, size.height - tp.height),
         );
 
-        // Draw text background
-        final bgRect = Rect.fromLTWH(offset.dx - 2, offset.dy - 1, tp.width + 4, tp.height + 2);
+        final bgRect = Rect.fromLTWH(
+          offset.dx - 2,
+          offset.dy - 1,
+          tp.width + 4,
+          tp.height + 2,
+        );
         canvas.drawRect(bgRect, textBgPaint);
 
-        // Draw text
         tp.paint(canvas, offset);
       }
     }
