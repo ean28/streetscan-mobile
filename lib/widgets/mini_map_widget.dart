@@ -2,10 +2,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
+import 'package:street_scan/widgets/common/map/map_helpers.dart';
+import 'package:street_scan/widgets/common/map/map_tile_layer.dart';
+import 'package:street_scan/widgets/common/map/map_controls.dart';
 
 import '../core/models/session_model.dart';
 
-class MiniMapWidget extends StatelessWidget {
+class MiniMapWidget extends StatefulWidget {
   final MapController mapController;
   final LatLng currentLocation;
   final List<SessionModel> sessions;
@@ -14,16 +18,30 @@ class MiniMapWidget extends StatelessWidget {
   final double? width;
 
   const MiniMapWidget({
-    Key? key,
+    super.key,
     required this.mapController,
     required this.currentLocation,
     required this.sessions,
     required this.onFullScreenTap,
     required this.height,
     this.width,
-  }) : super(key: key);
+  });
 
-  List<Marker> _buildPotholeMarkers() {
+  @override
+  State<MiniMapWidget> createState() => _MiniMapWidgetState();
+}
+
+class _MiniMapWidgetState extends State<MiniMapWidget> {
+  // source: 0=local, 1=all, 2=global
+  int _source = 0;
+  bool showHeatmap = false;
+  bool _loadingGlobal = false;
+  final ValueNotifier<List<Marker>> _globalMarkers = ValueNotifier(const []);
+  final ValueNotifier<List<Marker>> _localMarkers = ValueNotifier(const []);
+  final ValueNotifier<List<Marker>> _displayMarkers = ValueNotifier(const []);
+  List<Marker>? _cachedAllMarkers;
+
+  List<Marker> _buildLocalMarkers(List<SessionModel> sessions) {
     final List<Marker> markers = [];
     for (final session in sessions) {
       for (final entry in session.entries) {
@@ -40,73 +58,200 @@ class MiniMapWidget extends StatelessWidget {
     return markers;
   }
 
+  Future<void> _ensureGlobalMarkers() async {
+    if (_globalMarkers.value.isNotEmpty) return;
+    setState(() => _loadingGlobal = true);
+    try {
+      final fetched = await MapHelpers.fetchGlobalMarkers();
+      _globalMarkers.value = fetched;
+    } catch (e) {
+      debugPrint('⚠️ Failed to load global potholes: $e');
+    } finally {
+      setState(() => _loadingGlobal = false);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // compute local markers once and cache in a ValueNotifier
+    _localMarkers.value = _buildLocalMarkers(widget.sessions);
+    // compute combined display markers and keep updated when source/local/global changes
+    _computeDisplayMarkers();
+    _localMarkers.addListener(_computeDisplayMarkers);
+    _globalMarkers.addListener(_computeDisplayMarkers);
+  }
+
+  @override
+  void didUpdateWidget(covariant MiniMapWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessions != widget.sessions) {
+      _localMarkers.value = _buildLocalMarkers(widget.sessions);
+      // clear cachedAll so it will be recomputed if needed
+      _cachedAllMarkers = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _globalMarkers.removeListener(_computeDisplayMarkers);
+    _localMarkers.removeListener(_computeDisplayMarkers);
+    _displayMarkers.dispose();
+    _globalMarkers.dispose();
+    _localMarkers.dispose();
+    super.dispose();
+  }
+
+  void _computeDisplayMarkers() {
+    try {
+      final potholeMarkers = _localMarkers.value;
+      final gm = _globalMarkers.value;
+      final List<Marker> markers = [
+        ...(_source != 2 ? potholeMarkers : <Marker>[]),
+        Marker(
+          point: widget.currentLocation,
+          width: 36,
+          height: 36,
+          child: const Icon(Icons.navigation, color: Colors.blue, size: 28),
+        ),
+        if (_source != 0) ...gm.cast<Marker>(),
+      ];
+      _displayMarkers.value = markers;
+    } catch (e) {
+      debugPrint('⚠️ computeDisplayMarkers failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     try {
-      final potholeMarkers = _buildPotholeMarkers();
-      // current location marker
-      final currentMarker = Marker(
-        point: currentLocation,
-        width: 36,
-        height: 36,
-        child: Transform.rotate(
-          angle: 0, // placeholder; later you can rotate based on heading
-          child: const Icon(Icons.navigation, color: Colors.blue, size: 28),
-        ),
-      );
+      // display markers are computed and cached in _displayMarkers
+
+      // Heatmap points (from local or global)
+      final heatPoints = widget.sessions
+          .expand((s) => s.entries)
+          .map((e) => WeightedLatLng(LatLng(e.latitude, e.longitude), 0.5))
+          .toList();
+
       return SizedBox(
-        width: width ?? double.infinity,
-        height: height,
+        width: widget.width ?? double.infinity,
+        height: widget.height,
         child: Stack(
           children: [
             FlutterMap(
-              mapController: mapController,
+              mapController: widget.mapController,
               options: MapOptions(
-                initialCenter: currentLocation,
+                initialCenter: widget.currentLocation,
                 initialZoom: 16.0,
-                // disable interaction on the mini preview (button used for fullscreen)
                 interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.none,
+                  flags: InteractiveFlag.all,
                 ),
               ),
               children: [
-                TileLayer(
-                  urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  subdomains: const ['a', 'b', 'c'],
-                  // optional, helps some tile servers:
-                  userAgentPackageName: 'com.gian.street_scan',
+                const MapTileLayer(
+                  apiKey: 'x3dDnoZnrBeQEatH0r2F',
+                  mapId: 'streets',
                 ),
-                MarkerLayer(
-                  markers: [
-                    ...potholeMarkers,
-                    currentMarker,
-                  ],
+                if (showHeatmap)
+                  ValueListenableBuilder<List<Marker>>(
+                    valueListenable: _globalMarkers,
+                    builder: (context, gm, _) {
+                      final globalHeat = gm
+                          .map((m) => WeightedLatLng(m.point, 1.0))
+                          .toList();
+                      final data = _source == 2
+                          ? globalHeat
+                          : (_source == 1
+                                ? [
+                                    ...heatPoints,
+                                    ...gm.map(
+                                      (m) => WeightedLatLng(m.point, 0.75),
+                                    ),
+                                  ]
+                                : heatPoints);
+                      return HeatMapLayer(
+                        heatMapDataSource: InMemoryHeatMapDataSource(
+                          data: data,
+                        ),
+                        heatMapOptions: HeatMapOptions(radius: 20),
+                      );
+                    },
+                  ),
+                // Marker layer (cached list for performance)
+                ValueListenableBuilder<List<Marker>>(
+                  valueListenable: _displayMarkers,
+                  builder: (context, markers, _) {
+                    return MarkerLayer(markers: markers);
+                  },
                 ),
               ],
             ),
-            // top-right full-screen button
+            // Source selector - top-left
+            Positioned(
+              top: 8,
+              left: 8,
+              child: MapControls(
+                source: _source,
+                onSourceChanged: (idx) async {
+                  setState(() => _source = idx);
+                  if (_source != 0) await _ensureGlobalMarkers();
+                  if (_source == 1) {
+                    _cachedAllMarkers ??= [
+                      ..._localMarkers.value,
+                      ..._globalMarkers.value,
+                    ];
+                  }
+                },
+                showSourceControl: true,
+                showHeatmapControl: false,
+                showFullScreenControl: false,
+                loadingGlobal: _loadingGlobal,
+              ),
+            ),
+
+            // Fullscreen button - top-right
             Positioned(
               top: 8,
               right: 8,
-              child: SizedBox(
-                height: 36,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    backgroundColor: Colors.black54,
-                  ),
-                  icon: const Icon(Icons.open_in_full, size: 18),
-                  label: const Text('Full', style: TextStyle(fontSize: 12)),
-                  onPressed: onFullScreenTap,
-                ),
+              child: MapControls(
+                source: _source,
+                onSourceChanged: null,
+                showSourceControl: false,
+                showHeatmapControl: false,
+                showFullScreenControl: true,
+                onFullScreen: widget.onFullScreenTap,
               ),
             ),
+
+            // Heatmap toggle - bottom-left
+            Positioned(
+              bottom: 8,
+              left: 8,
+              child: MapControls(
+                source: _source,
+                onSourceChanged: null,
+                showSourceControl: false,
+                showHeatmapControl: true,
+                showFullScreenControl: false,
+                showHeatmapState: showHeatmap,
+                onToggleHeatmap: () =>
+                    setState(() => showHeatmap = !showHeatmap),
+              ),
+            ),
+            if (_loadingGlobal)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.black26,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ),
           ],
         ),
       );
     } catch (e) {
-      return Center(child: Text('Map failed to load', style: TextStyle(color: Colors.red)));
+      return const Center(
+        child: Text('Map failed to load', style: TextStyle(color: Colors.red)),
+      );
     }
   }
 }

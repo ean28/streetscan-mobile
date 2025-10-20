@@ -1,11 +1,15 @@
 // lib/screens/session_review_screen.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map/flutter_map.dart';
+import '../widgets/common/map/map_tile_layer.dart';
 import 'package:street_scan/core/services/local_storage_service.dart';
 import '../core/models/session_model.dart';
 import '../core/models/pothole_entry.dart';
-import '../core/utils/image_utils.dart' as ImageUtils;
+import '../core/utils/image_utils.dart' as image_utils;
+import '../core/services/firebase_service.dart';
+import '../core/services/upload_metadata_service.dart';
 
 class SessionReviewScreen extends StatefulWidget {
   final SessionModel session;
@@ -20,11 +24,10 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
   final MapController _mapController = MapController();
   late List<_PotholeWrapper> _potholes;
 
-  String get severitySummary =>
-      (widget.session.potholeSeverityCounts ?? {})
-          .entries
-          .map((e) => "${e.key}: ${e.value}")
-          .join(", ");
+  String get severitySummary => (widget.session.potholeSeverityCounts ?? {})
+      .entries
+      .map((e) => "${e.key}: ${e.value}")
+      .join(", ");
 
   @override
   void initState() {
@@ -83,8 +86,7 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
 
   void _toggleSelection(int index, bool? value) {
     setState(() {
-      _potholes[index] =
-          _potholes[index].copyWith(isSelected: value ?? false);
+      _potholes[index] = _potholes[index].copyWith(isSelected: value ?? false);
     });
   }
 
@@ -120,16 +122,6 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
     }
   }
 
-  void _showSwipeHint(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("👉 Swipe left on a tile to delete it"),
-        duration: Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final gpsTrack = widget.session.gpsTrack ?? [];
@@ -154,35 +146,46 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
               mapController: _mapController,
               options: MapOptions(
                 initialCenter: _potholes.isNotEmpty
-                    ? LatLng(_potholes.first.entry.latitude,
-                        _potholes.first.entry.longitude)
+                    ? LatLng(
+                        _potholes.first.entry.latitude,
+                        _potholes.first.entry.longitude,
+                      )
                     : const LatLng(0, 0),
                 initialZoom: 10,
               ),
               children: [
-                TileLayer(
-                  urlTemplate:
-                      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  subdomains: const ['a', 'b', 'c'],
+                const MapTileLayer(
+                  apiKey: 'x3dDnoZnrBeQEatH0r2F',
+                  mapId: 'streets',
                 ),
                 if (gpsTrack.isNotEmpty)
                   MarkerLayer(
                     markers: [
                       Marker(
                         point: LatLng(
-                            gpsTrack.first["lat"]!, gpsTrack.first["lng"]!),
+                          gpsTrack.first["lat"]!,
+                          gpsTrack.first["lng"]!,
+                        ),
                         width: 36,
                         height: 36,
-                        child: const Icon(Icons.play_arrow,
-                            color: Colors.green, size: 32),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.green,
+                          size: 32,
+                        ),
                       ),
                       Marker(
                         point: LatLng(
-                            gpsTrack.last["lat"]!, gpsTrack.last["lng"]!),
+                          gpsTrack.last["lat"]!,
+                          gpsTrack.last["lng"]!,
+                        ),
                         width: 36,
                         height: 36,
-                        child: const Icon(Icons.stop,
-                            color: Colors.red, size: 32),
+                        child: const Icon(
+                          Icons.stop,
+                          color: Colors.red,
+                          size: 32,
+                        ),
                       ),
                     ],
                   ),
@@ -208,139 +211,79 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
           ),
           const Divider(),
           //-----POTHOLE LABEL COUNT----//
-          if (severitySummary.isNotEmpty || widget.session.averageLatency != null || widget.session.totalFramesProcessed != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (severitySummary.isNotEmpty)
-                    Text(
-                      "Severity Counts: $severitySummary",
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black87,
+          if (severitySummary.isNotEmpty ||
+              widget.session.averageLatency != null ||
+              widget.session.totalFramesProcessed != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (severitySummary.isNotEmpty)
+                      Text(
+                        "Severity Counts: $severitySummary",
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black87,
+                        ),
                       ),
-                    ),
-                  if (widget.session.averageLatency != null)
-                    Text(
-                      "Average Latency: ${widget.session.averageLatency!.toStringAsFixed(2)} ms",
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.black87,
+                    if (widget.session.averageLatency != null)
+                      Text(
+                        "Average Latency: ${widget.session.averageLatency!.toStringAsFixed(2)} ms",
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.black87,
+                        ),
                       ),
-                    ),
-                  if (widget.session.totalFramesProcessed != null)
-                    Text(
-                      "Frames Processed: ${widget.session.totalFramesProcessed}",
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.black87,
+                    if (widget.session.totalFramesProcessed != null)
+                      Text(
+                        "Frames Processed: ${widget.session.totalFramesProcessed}",
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.black87,
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
 
           Expanded(
             child: ListView.builder(
               itemCount: _potholes.length,
               itemBuilder: (context, i) {
                 final pothole = _potholes[i];
-                final loadImage =
-                    ImageUtils.loadImage(pothole.entry.imagePath, size: 60);
+                final loadImage = image_utils.loadImage(
+                  pothole.entry.imagePath,
+                  size: 60,
+                );
 
-                return Dismissible(
-                  key: ValueKey(pothole.entry.timestamp),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    color: Colors.redAccent,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: const Icon(Icons.delete, color: Colors.white),
-                  ),
-                  onDismissed: (_) => _deleteSingle(i),
-                  child: ListTile(
-                    onTap: () => _showSwipeHint(context),
-                    leading: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Checkbox(
-                          value: pothole.isSelected,
-                          onChanged: (val) => _toggleSelection(i, val),
-                        ),
-                        GestureDetector(
-                          onTap: () {
-                            showDialog(
-                              context: context,
-                              barrierColor: Colors.black.withOpacity(0.85),
-                              builder: (_) {
-                                return GestureDetector(
-                                  onTap: () => Navigator.of(context).pop(),
-                                  child: Scaffold(
-                                    backgroundColor: Colors.transparent,
-                                    body: Stack(
-                                      children: [
-                                        Column(
-                                          children: [
-                                            Container(
-                                              height: 100,
-                                              color: Colors.black.withOpacity(0.5),
-                                            ),
-                                            Expanded(
-                                              child: Center(
-                                                child: ImageUtils.loadImage(
-                                                  pothole.entry.imagePath,
-                                                  size: MediaQuery.of(context)
-                                                          .size
-                                                          .width *
-                                                      0.9,
-                                                  fit: BoxFit.contain,
-                                                ),
-                                              ),
-                                            ),
-                                            Container(
-                                              height: 100,
-                                              color: Colors.black.withOpacity(0.5),
-                                            ),
-                                          ],
-                                        ),
-                                        Positioned(
-                                          top: 40,
-                                          right: 20,
-                                          child: IconButton(
-                                            icon: const Icon(Icons.close,
-                                                color: Colors.white, size: 32),
-                                            onPressed: () =>
-                                                Navigator.of(context).pop(),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                          child: loadImage,
-                        ),
-                      ],
-                    ),
-                    title: Text(
-                      "Pothole ${i + 1} @ ${pothole.entry.latitude.toStringAsFixed(5)}, ${pothole.entry.longitude.toStringAsFixed(5)}",
-                    ),
-                    subtitle: Text(
-                      "Captured: ${pothole.entry.timestamp.toLocal().toString().split('.')[0]}",
-                    ),
-                  ),
+                return _PotholeListTile(
+                  index: i,
+                  pothole: pothole,
+                  loadImage: loadImage,
+                  sessionPendingUpload: widget.session.pendingUpload,
+                  onDelete: () => _deleteSingle(i),
+                  onToggle: (v) => _toggleSelection(i, v),
+                  onRetrySuccess: (newUrl) async {
+                    // update local session entry
+                    setState(() {
+                      final updated = pothole.entry.copyWith(imageUrl: newUrl);
+                      _potholes[i] = pothole.copyWith(entry: updated);
+                    });
+                    // persist session
+                    final updatedSession = widget.session.copyWith(
+                      entries: _potholes.map((p) => p.entry).toList(),
+                    );
+                    await LocalStorageService.saveSession(updatedSession);
+                  },
                 );
               },
             ),
-          )
+          ),
         ],
       ),
       bottomNavigationBar: Container(
@@ -349,7 +292,10 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
           color: Colors.grey.shade100,
           boxShadow: const [
             BoxShadow(
-                color: Colors.black12, blurRadius: 2, offset: Offset(0, -1))
+              color: Colors.black12,
+              blurRadius: 2,
+              offset: Offset(0, -1),
+            ),
           ],
         ),
         child: Row(
@@ -362,12 +308,7 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
               onPressed: _discardChanges,
               child: const Text("Discard Changes"),
             ),
-            Divider(
-              color: Colors.grey,
-              thickness: 1,
-              indent: 8,
-              endIndent: 8,
-            ),
+            Divider(color: Colors.grey, thickness: 1, indent: 8, endIndent: 8),
             TextButton(
               onPressed: _confirmChanges,
               child: const Text("Confirm Changes"),
@@ -379,11 +320,152 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
   }
 }
 
+class _PotholeListTile extends StatefulWidget {
+  final int index;
+  final _PotholeWrapper pothole;
+  final Widget loadImage;
+  final bool sessionPendingUpload;
+  final VoidCallback onDelete;
+  final ValueChanged<bool?> onToggle;
+  final ValueChanged<String> onRetrySuccess;
+
+  const _PotholeListTile({
+    required this.index,
+    required this.pothole,
+    required this.loadImage,
+    required this.sessionPendingUpload,
+    required this.onDelete,
+    required this.onToggle,
+    required this.onRetrySuccess,
+  });
+
+  @override
+  State<_PotholeListTile> createState() => _PotholeListTileState();
+}
+
+class _PotholeListTileState extends State<_PotholeListTile> {
+  bool _loading = false;
+
+  Future<void> _retry() async {
+    setState(() => _loading = true);
+    try {
+      final url = await FirebaseService().uploadSingleEntryImage(
+        entryId: widget.pothole.entry.id,
+        path: widget.pothole.entry.imagePath,
+        sessionId: widget.pothole.entry.sessionId,
+      );
+      // clear metadata
+      await UploadMetadataService.clearMetadata(widget.pothole.entry.id);
+      widget.onRetrySuccess(url);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Retry succeeded')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Retry failed: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.pothole;
+    final meta = UploadMetadataService.getMetadata(p.entry.id);
+    final retryCount = (meta?['retryCount'] as int?) ?? 0;
+    final lastError = meta?['lastError'] as String?;
+
+    return Dismissible(
+      key: ValueKey(p.entry.timestamp),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: Colors.redAccent,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      onDismissed: (_) => widget.onDelete(),
+      child: ListTile(
+        onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("👉 Swipe left on a tile to delete it")),
+        ),
+        leading: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Checkbox(value: p.isSelected, onChanged: widget.onToggle),
+            GestureDetector(
+              onTap: () => _showImageViewer(context, p.entry.imagePath),
+              child: widget.loadImage,
+            ),
+          ],
+        ),
+        title: Text(
+          'Pothole ${widget.index + 1} @ ${p.entry.latitude.toStringAsFixed(5)}, ${p.entry.longitude.toStringAsFixed(5)}',
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Captured: ${p.entry.timestamp.toLocal().toString().split('.')[0]}',
+            ),
+            if (retryCount > 0)
+              Text(
+                'Retries: $retryCount',
+                style: const TextStyle(color: Colors.red),
+              ),
+            if (lastError != null)
+              Text(
+                'Error: $lastError',
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              ),
+          ],
+        ),
+        trailing: _loading
+            ? const SizedBox(
+                width: 36,
+                height: 36,
+                child: CircularProgressIndicator(),
+              )
+            : (widget.sessionPendingUpload
+                  ? const SizedBox(width: 36, height: 36)
+                  : IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _retry,
+                      tooltip: 'Retry upload for this entry',
+                    )),
+      ),
+    );
+  }
+
+  void _showImageViewer(BuildContext context, String imagePath) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          child: InteractiveViewer(
+            panEnabled: true,
+            minScale: 0.5,
+            maxScale: 4.0,
+            child: Image.file(File(imagePath), fit: BoxFit.contain),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Simple wrapper used by the review screen to track selection state alongside the entry
 class _PotholeWrapper {
   final PotholeEntry entry;
   final bool isSelected;
 
-  _PotholeWrapper({required this.entry, required this.isSelected});
+  const _PotholeWrapper({required this.entry, required this.isSelected});
 
   _PotholeWrapper copyWith({PotholeEntry? entry, bool? isSelected}) {
     return _PotholeWrapper(

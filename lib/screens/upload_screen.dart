@@ -1,10 +1,7 @@
-// lib/screens/upload_screen.dart
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:street_scan/screens/misc/uploadprogress.dart';
 import '../core/models/session_model.dart';
-import '../core/services/firebase_service.dart';
-import '../core/services/local_storage_service.dart';
-import '../core/utils/image_utils.dart' as ImageUtils;
+import '../core/utils/image_utils.dart' as image_utils;
 
 class UploadScreen extends StatefulWidget {
   final List<SessionModel> sessions;
@@ -16,52 +13,16 @@ class UploadScreen extends StatefulWidget {
 }
 
 class _UploadScreenState extends State<UploadScreen> {
-  final FirebaseService _firebaseService = FirebaseService();
-
-  // sessionId -> bool (include whole session)
   final Map<String, bool> _sessionSelected = {};
-
-  // sessionId -> set of pothole ids included
   final Map<String, Set<String>> _potholeSelected = {};
-
-  FlutterLocalNotificationsPlugin? _notificationsPlugin;
 
   @override
   void initState() {
     super.initState();
-    // initialize session selections
     for (final s in widget.sessions) {
       _sessionSelected[s.id] = true;
       _potholeSelected[s.id] = s.entries.map((e) => e.id).toSet();
     }
-    _initNotifications();
-  }
-
-  void _initNotifications() {
-    _notificationsPlugin = FlutterLocalNotificationsPlugin();
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosSettings = DarwinInitializationSettings();
-    _notificationsPlugin!.initialize(
-      const InitializationSettings(android: androidSettings, iOS: iosSettings),
-    );
-  }
-
-  Future<void> _showNotification(String title, String body, {int id = 0}) async {
-    const androidDetails = AndroidNotificationDetails(
-      'upload_channel',
-      'Upload Notifications',
-      channelDescription: 'Notifications for upload progress',
-      importance: Importance.max,
-      priority: Priority.high,
-      showProgress: true,
-    );
-    const iosDetails = DarwinNotificationDetails();
-    await _notificationsPlugin?.show(
-      id,
-      title,
-      body,
-      const NotificationDetails(android: androidDetails, iOS: iosDetails),
-    );
   }
 
   void _toggleSession(String sessionId, bool val) {
@@ -88,8 +49,15 @@ class _UploadScreenState extends State<UploadScreen> {
     });
   }
 
+  int _countSelectedPotholes() {
+    int count = 0;
+    for (final session in widget.sessions) {
+      count += _potholeSelected[session.id]?.length ?? 0;
+    }
+    return count;
+  }
+
   void _performUpload() {
-    // prepare sessions
     final toUpload = <SessionModel>[];
     for (final s in widget.sessions) {
       if (_sessionSelected[s.id] != true) continue;
@@ -107,7 +75,6 @@ class _UploadScreenState extends State<UploadScreen> {
       return;
     }
 
-    // Clear the screen immediately
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => UploadProgressScreen(toUpload: toUpload),
@@ -117,6 +84,8 @@ class _UploadScreenState extends State<UploadScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final totalSelected = _countSelectedPotholes();
+
     return Scaffold(
       appBar: AppBar(title: const Text('Confirm Upload')),
       body: ListView(
@@ -130,17 +99,22 @@ class _UploadScreenState extends State<UploadScreen> {
                   value: selected,
                   onChanged: (v) => _toggleSession(s.id, v ?? false),
                 ),
-                Expanded(child: Text('Session: ${s.id} — ${s.count} potholes')),
+                Expanded(
+                  child: Text('Session: ${s.id} — ${s.count} pothole(s)'),
+                ),
               ],
             ),
             children: s.entries.map((p) {
-              final potholeSelected = _potholeSelected[s.id]?.contains(p.id) ?? false;
+              final potholeSelected =
+                  _potholeSelected[s.id]?.contains(p.id) ?? false;
               return ListTile(
-                leading: ImageUtils.loadImage(p.imagePath, size: 52),
+                leading: image_utils.loadImage(p.imagePath, size: 52),
                 title: Text(
-                    'Pothole @ ${p.latitude.toStringAsFixed(5)}, ${p.longitude.toStringAsFixed(5)}'),
+                  'Pothole @ ${p.latitude.toStringAsFixed(5)}, ${p.longitude.toStringAsFixed(5)}',
+                ),
                 subtitle: Text(
-                    'Captured: ${p.timestamp.toLocal().toString().split('.')[0]}'),
+                  'Captured: ${p.timestamp.toLocal().toString().split('.')[0]}',
+                ),
                 trailing: Checkbox(
                   value: potholeSelected,
                   onChanged: selected
@@ -158,87 +132,9 @@ class _UploadScreenState extends State<UploadScreen> {
           child: ElevatedButton.icon(
             onPressed: _performUpload,
             icon: const Icon(Icons.cloud_upload),
-            label: const Text('Upload Selected'),
+            label: Text('Confirm Upload ($totalSelected)'),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class UploadProgressScreen extends StatefulWidget {
-  final List<SessionModel> toUpload;
-
-  const UploadProgressScreen({super.key, required this.toUpload});
-
-  @override
-  State<UploadProgressScreen> createState() => _UploadProgressScreenState();
-}
-
-class _UploadProgressScreenState extends State<UploadProgressScreen> {
-  final FirebaseService _firebaseService = FirebaseService();
-  FlutterLocalNotificationsPlugin? _notificationsPlugin;
-
-  @override
-  void initState() {
-    super.initState();
-    _initNotifications();
-    _startUpload();
-  }
-
-  void _initNotifications() {
-    _notificationsPlugin = FlutterLocalNotificationsPlugin();
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosSettings = DarwinInitializationSettings();
-    _notificationsPlugin!.initialize(
-      const InitializationSettings(android: androidSettings, iOS: iosSettings),
-    );
-  }
-
-  Future<void> _showNotification(String title, String body, {int id = 0}) async {
-    const androidDetails = AndroidNotificationDetails(
-      'upload_channel',
-      'Upload Notifications',
-      channelDescription: 'Notifications for upload progress',
-      importance: Importance.max,
-      priority: Priority.high,
-      showProgress: true,
-    );
-    const iosDetails = DarwinNotificationDetails();
-    await _notificationsPlugin?.show(
-      id,
-      title,
-      body,
-      const NotificationDetails(android: androidDetails, iOS: iosDetails),
-    );
-  }
-
-  Future<void> _startUpload() async {
-    for (int i = 0; i < widget.toUpload.length; i++) {
-      final session = widget.toUpload[i];
-      final notifId = i;
-
-      try {
-        await _showNotification('Uploading session ${session.id}', 'Uploading now...', id: notifId);
-
-        await _firebaseService.uploadSession(session);
-
-        await _showNotification('Session ${session.id} uploaded', 'Upload complete', id: notifId);
-      } catch (e) {
-        await _showNotification('Session ${session.id} failed', e.toString(), id: notifId);
-      }
-    }
-
-    // All uploads done, pop back to previous screen
-    if (mounted) Navigator.pop(context, true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Uploading...')),
-      body: const Center(
-        child: Text('Your uploads are being processed. Check notifications for progress.'),
       ),
     );
   }
