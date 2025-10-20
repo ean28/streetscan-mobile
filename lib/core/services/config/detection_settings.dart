@@ -1,4 +1,3 @@
-// lib/core/services/config/detection_settings.dart
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
@@ -15,7 +14,6 @@ class DetectionConfig extends ChangeNotifier {
   static double get iouThreshold => 0.30;
   static int get maxDetections => 80;
 
-  // 🔹 Keep track of availability
   final Map<InferenceSize, bool> _availableModels = {};
 
   Map<InferenceSize, bool> get availableModels => _availableModels;
@@ -41,12 +39,11 @@ class DetectionConfig extends ChangeNotifier {
         return 640;
     }
   }
-  
+
   String get currentModelAsset {
     return _modelAssets[_inputSize]!;
   }
 
-  /// 🔹 Check which models exist in assets
   static Future<Map<InferenceSize, bool>> checkAvailableModels() async {
     final availability = <InferenceSize, bool>{};
     for (final entry in _modelAssets.entries) {
@@ -64,9 +61,6 @@ class DetectionConfig extends ChangeNotifier {
 
   Future<List<String>> loadLabels() async {
     final data = await rootBundle.loadString('assets/model_clabels.txt');
-    return data
-        .split('\n')
-        .where((line) => line.trim().isNotEmpty)
-        .toList();
+    return data.split('\n').where((line) => line.trim().isNotEmpty).toList();
   }
 }
