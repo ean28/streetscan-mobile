@@ -10,6 +10,14 @@ class DetectionConfig extends ChangeNotifier {
   InferenceSize _inputSize = InferenceSize.s640;
   InferenceSize get inputSize => _inputSize;
 
+  // Processing interval in milliseconds for inference throttling (default 200ms => 5 FPS)
+  int _processingIntervalMs = 200;
+  int get processingIntervalMs => _processingIntervalMs;
+  setProcessingIntervalMs(int ms) {
+    _processingIntervalMs = ms;
+    notifyListeners();
+  }
+
   static double get confThreshold => 0.25;
   static double get iouThreshold => 0.30;
   static int get maxDetections => 80;

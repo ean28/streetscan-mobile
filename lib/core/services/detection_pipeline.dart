@@ -1,13 +1,14 @@
 import 'dart:async';
-import 'dart:isolate';
+// dart:isolate not needed: using InferenceIsolateManager instead
+import 'package:street_scan/core/services/inference_isolate.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:street_scan/core/services/config/detection_settings.dart';
-import 'pothole_detector.dart';
 import '../detection/detection.dart';
 
-typedef DetectionCallback = void Function(List<Detection> detections, int detectionMs, int inferenceMs);
+typedef DetectionCallback =
+    void Function(List<Detection> detections, int detectionMs, int inferenceMs);
 typedef DetectionMsCallback = void Function(int detectionMs);
 
 class PotholeDetectionPipeline {
@@ -20,9 +21,7 @@ class PotholeDetectionPipeline {
   final _frameQueue = StreamController<CameraImage>.broadcast();
 
   // Isolate
-  Isolate? _detectionIsolate;
-  SendPort? _sendPort;
-  ReceivePort? _receivePort;
+  InferenceIsolateManager? _inferenceManager;
 
   bool _isProcessing = false;
 
@@ -44,67 +43,44 @@ class PotholeDetectionPipeline {
 
   // ---------------- Public API ----------------
   Future<void> init() async {
-    _receivePort = ReceivePort();
-    _detectionIsolate = await Isolate.spawn(
-      _detectionIsolateEntry,
-      _receivePort!.sendPort,
+    // Load model bytes + labels in MAIN isolate
+    final modelBytes = (await rootBundle.load(
+      DetectionConfig.instance.currentModelAsset,
+    )).buffer.asUint8List();
+    final labels = await DetectionConfig.instance.loadLabels();
+
+    // Create and start the inference manager (it spawns its own isolate internally)
+    _inferenceManager = InferenceIsolateManager(
+      minInterval: Duration(
+        milliseconds: DetectionConfig.instance.processingIntervalMs,
+      ),
     );
+    // Result callback
+    _inferenceManager!.onResult = (detections, detectionMs, inferenceMs) {
+      _lastDetectionTimes = detectionMs;
+      _totalFrames++;
+      _totalDetectionMs += detectionMs;
 
-    // Listen for messages from isolate
-    _receivePort!.listen((message) async {
-      if (message is SendPort) {
-        _sendPort = message;
-
-        // Load model bytes + labels in MAIN isolate
-        final modelBytes = (await rootBundle
-                .load(DetectionConfig.instance.currentModelAsset))
-            .buffer
-            .asUint8List();
-        final labels = await DetectionConfig.instance.loadLabels();
-
-        // Send init message to detection isolate
-        _sendPort!.send({
-          'type': 'init',
-          'model': modelBytes,
-          'labels': labels,
-        });
-      } else if (message is Map<String, dynamic>) {
-        if (message['type'] == 'model_loaded') {
-          if (kDebugMode) debugPrint('✅ Model loaded confirmed in main isolate');
-          onModelLoaded?.call(); 
-          return;
-        }
-
-        // Normal detection message
-        final detections = message['detections'] as List<Detection>;
-        final detectionMs = message['detectionMs'] as int;
-        final inferenceMs = message['inferenceMs'] as int;
-
-        _lastDetectionTimes = detectionMs;
-        _totalFrames++;
-        _totalDetectionMs += detectionMs;
-
-        if (snapshotEveryFrame || detections.isNotEmpty) {
-          onDetection(detections, detectionMs, inferenceMs);
-        }
-        onDetectionMs?.call(detectionMs);
-
-        _isProcessing = false;
+      if (snapshotEveryFrame || detections.isNotEmpty) {
+        onDetection(detections, detectionMs, inferenceMs);
       }
-    });
+      onDetectionMs?.call(detectionMs);
 
-    // Frame listener
+      _isProcessing = false;
+    };
+
+    // Start manager and wait for it to be ready (it pre-warms inside)
+    await _inferenceManager!.start(modelBytes, labels);
+    if (kDebugMode) debugPrint('✅ Model loaded confirmed in main isolate');
+    onModelLoaded?.call();
+
+    // Frame listener - convert frames then send to inference manager
     _frameQueue.stream.listen((frame) async {
-      if (_sendPort != null && !_isProcessing) {
+      if (_inferenceManager != null && !_isProcessing) {
         _isProcessing = true;
         try {
           final bytes = cameraImageToBytes(frame);
-          _sendPort!.send({
-            'type': 'frame',
-            'bytes': bytes,
-            'width': frame.width,
-            'height': frame.height,
-          });
+          await _inferenceManager!.sendFrame(bytes, frame.width, frame.height);
         } catch (e) {
           if (kDebugMode) debugPrint('Frame conversion failed: $e');
           _isProcessing = false;
@@ -124,65 +100,44 @@ class PotholeDetectionPipeline {
 
   Future<void> dispose() async {
     _frameQueue.close();
-    _receivePort?.close();
-    _detectionIsolate?.kill(priority: Isolate.immediate);
+    try {
+      await _inferenceManager?.stop();
+    } catch (_) {}
   }
 
-  // ---------------- Detection isolate entry ----------------
-  static void _detectionIsolateEntry(SendPort mainSendPort) async {
-    final port = ReceivePort();
-    mainSendPort.send(port.sendPort);
-
-    await for (final message in port) {
-      if (message is Map<String, dynamic>) {
-        if (message['type'] == 'init') {
-          final modelBytes = message['model'] as Uint8List;
-          final labels = (message['labels'] as List).cast<String>();
-          await PotholeDetector.instance.loadModelFromBuffer(modelBytes, labels);
-          debugPrint("✅ Model loaded in isolate");
-
-          mainSendPort.send({'type': 'model_loaded'});
-        } else if (message['type'] == 'frame') {
-          final bytes = message['bytes'] as Uint8List;
-          final width = message['width'] as int;
-          final height = message['height'] as int;
-
-          try {
-            final stopwatch = Stopwatch()..start();
-            final outputs = await PotholeDetector.instance.processImageBytes(bytes, width, height);
-            stopwatch.stop();
-            final stopwatchDetectMs = stopwatch.elapsedMilliseconds;
-
-            final inferenceMs = PotholeDetector.instance.lastInferenceMs;
-
-            mainSendPort.send({
-              'detections': outputs,
-              'detectionMs': stopwatchDetectMs,
-              'inferenceMs': inferenceMs,
-            });
-          } catch (e, st) {
-            if (kDebugMode) debugPrint('Isolate detection error: $e\n$st');
-            mainSendPort.send({'detections': <Detection>[], 'detectionMs': 0});
-          }
-        }
-      }
+  /// Change the processing interval at runtime without restarting the isolate.
+  void setProcessingIntervalMs(int ms) {
+    _inferenceManager?.setInterval(Duration(milliseconds: ms));
+    // update stats notifier too
+    final notifier = _inferenceManager?.statsNotifier;
+    if (notifier != null) {
+      notifier.value = notifier.value.copyWith(currentIntervalMs: ms);
     }
   }
-  Future<void> runStaticImageTest(Uint8List bytes, int width, int height) async {
-    if (_sendPort != null) {
-      _sendPort!.send({
-        'type': 'frame',
-        'bytes': bytes,
-        'width': width,
-        'height': height,
-      });
+
+  /// Expose stats notifier for UI overlay
+  ValueNotifier<ManagerStats>? get statsNotifier =>
+      _inferenceManager?.statsNotifier;
+
+  Future<void> runStaticImageTest(
+    Uint8List bytes,
+    int width,
+    int height,
+  ) async {
+    try {
+      if (_inferenceManager != null) {
+        await _inferenceManager!.sendFrame(bytes, width, height);
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('runStaticImageTest failed: $e');
     }
   }
 }
 
 // ---------------- Helper: CameraImage → RGB bytes ----------------
 Uint8List cameraImageToBytes(CameraImage image) {
-  if (image.format.group == ImageFormatGroup.yuv420 && image.planes.length >= 3) {
+  if (image.format.group == ImageFormatGroup.yuv420 &&
+      image.planes.length >= 3) {
     final width = image.width;
     final height = image.height;
     final rgb = Uint8List(width * height * 3);
