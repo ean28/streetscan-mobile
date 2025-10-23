@@ -6,11 +6,14 @@ import 'package:camera/camera.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:street_scan/core/services/detection_pipeline.dart';
+import 'package:street_scan/core/services/config/detection_settings.dart';
 import 'package:street_scan/widgets/common/settings/detscr_settings.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:street_scan/widgets/debug/inference_overlay.dart';
+import 'package:street_scan/core/services/inference_isolate.dart';
 
 import '../core/models/session_model.dart';
 import '../core/models/pothole_entry.dart';
@@ -50,6 +53,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
   int _lastInferenceMs = 0;
   String _deviceModel = "Unknown";
   bool _modelLoaded = false;
+  ValueNotifier<ManagerStats>? _statsNotifier;
 
   OverlayMode _overlayMode = OverlayMode.sessionOnly;
 
@@ -83,13 +87,32 @@ class _DetectionScreenState extends State<DetectionScreen> {
         }
       },
       onModelLoaded: () {
-        if (mounted) setState(() => _modelLoaded = true);
+        if (mounted) {
+          setState(() => _modelLoaded = true);
+          // the pipeline creates the manager during init; read its stats notifier if available
+          _statsNotifier = _pipeline.statsNotifier;
+        }
       },
       onDetectionMs: (detectionMs) {
         if (mounted) setState(() => _lastDetectionLatency = detectionMs);
       },
     );
     _pipeline.init();
+
+    // Listen for changes in processing interval and re-init pipeline when changed.
+    DetectionConfig.instance.addListener(_onDetectionConfigChanged);
+  }
+
+  void _onDetectionConfigChanged() {
+    // Apply new processing interval at runtime without restarting the pipeline.
+    final ms = DetectionConfig.instance.processingIntervalMs;
+    try {
+      _pipeline.setProcessingIntervalMs(ms);
+      // update local stats notifier reference in case it wasn't set earlier
+      _statsNotifier ??= _pipeline.statsNotifier;
+    } catch (e) {
+      if (kDebugMode) debugPrint('Failed to set processing interval: $e');
+    }
   }
 
   Future<void> _loadDeviceModel() async {
@@ -417,6 +440,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
     _cameraController?.dispose();
     _snapshotQueue.close();
     _pipeline.dispose();
+    DetectionConfig.instance.removeListener(_onDetectionConfigChanged);
     PotholeDetector.instance.close();
     WakelockPlus.disable();
     super.dispose();
@@ -533,6 +557,13 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ),
             ),
           ),
+          // Inference debug overlay (shows frames sent/processed/dropped etc.)
+          if (_statsNotifier != null)
+            Positioned(
+              top: 12,
+              left: 12,
+              child: InferenceOverlay(stats: _statsNotifier!),
+            ),
           if (_shouldShowOverlay && _lastDetections.isNotEmpty)
             Positioned.fill(
               child: CustomPaint(

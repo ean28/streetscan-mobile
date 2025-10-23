@@ -24,11 +24,7 @@ class DetectionScreenSettings extends StatefulWidget {
       _DetectionScreenSettingsState();
 }
 
-enum OverlayMode {
-  alwaysOn,
-  sessionOnly,
-  off,
-}
+enum OverlayMode { alwaysOn, sessionOnly, off }
 
 class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
   OverlayMode _overlayMode = OverlayMode.alwaysOn;
@@ -58,11 +54,13 @@ class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
                   items: OverlayMode.values.map((e) {
                     return DropdownMenuItem(
                       value: e,
-                      child: Text({
-                        OverlayMode.alwaysOn: "Always On",
-                        OverlayMode.sessionOnly: "Session Only",
-                        OverlayMode.off: "Off",
-                      }[e]!),
+                      child: Text(
+                        {
+                          OverlayMode.alwaysOn: "Always On",
+                          OverlayMode.sessionOnly: "Session Only",
+                          OverlayMode.off: "Off",
+                        }[e]!,
+                      ),
                     );
                   }).toList(),
                   onChanged: (value) {
@@ -100,13 +98,7 @@ class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
                           value: e,
                           enabled: enabled,
                           child: Text(
-                            "${{
-                              InferenceSize.s320:
-                                  "320 × 320 (Fastest, Lowest Accuracy)",
-                              InferenceSize.s416: "416 × 416 (Balanced)",
-                              InferenceSize.s640:
-                                  "640 × 640 (Most Accurate, Slowest)",
-                            }[e]!}${enabled ? "" : " ❌ Missing"}",
+                            "${{InferenceSize.s320: "320 × 320 (Fastest, Lowest Accuracy)", InferenceSize.s416: "416 × 416 (Balanced)", InferenceSize.s640: "640 × 640 (Most Accurate, Slowest)"}[e]!}${enabled ? "" : " ❌ Missing"}",
                             style: TextStyle(
                               color: enabled ? null : Colors.grey,
                             ),
@@ -116,7 +108,8 @@ class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
                       onChanged: (value) async {
                         if (value == null) return;
                         setModalState(
-                            () => DetectionConfig.instance.setInputSize(value));
+                          () => DetectionConfig.instance.setInputSize(value),
+                        );
                         await PotholeDetector.instance.loadModel();
                         if (kDebugMode) {
                           debugPrint(
@@ -155,6 +148,41 @@ class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
                     await PotholeDetector.instance.loadModel();
                     if (kDebugMode) {
                       debugPrint("Switched backend to ${value.name}");
+                    }
+                    setState(() {});
+                  },
+                ),
+              ),
+
+              // FPS / processing interval
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  "Inference Rate",
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: DropdownButton<int>(
+                  isExpanded: true,
+                  value: DetectionConfig.instance.processingIntervalMs,
+                  items: const [1, 5, 8, 10, 15].map((fps) {
+                    final ms = (1000 / fps).round();
+                    return DropdownMenuItem<int>(
+                      value: ms,
+                      child: Text("$fps FPS (${ms} ms)"),
+                    );
+                  }).toList(),
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    setModalState(
+                      () => DetectionConfig.instance.setProcessingIntervalMs(
+                        value,
+                      ),
+                    );
+                    if (kDebugMode) {
+                      debugPrint('Set processing interval to ${value}ms');
                     }
                     setState(() {});
                   },
