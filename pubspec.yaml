@@ -88,6 +88,7 @@ dev_dependencies:
 flutter:
   assets:
     - assets/models/model_640_float32.tflite
+    - assets/models/1best_float16.tflite
     - assets/model_clabels.txt
     - assets/test/
   # The following line ensures that the Material Icons font is
