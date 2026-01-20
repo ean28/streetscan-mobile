@@ -20,9 +20,7 @@ class Detection {
     required this.letterboxScale,
     required this.letterboxDx,
     required this.letterboxDy,
-  }) : assert(
-         box.left >= 0 && box.top >= 0 && box.right >= 0 && box.bottom >= 0,
-       );
+  });
 
   Rect remapToModelInput() {
     final double x1 = box.left * letterboxScale + letterboxDx;
@@ -30,5 +28,27 @@ class Detection {
     final double x2 = box.right * letterboxScale + letterboxDx;
     final double y2 = box.bottom * letterboxScale + letterboxDy;
     return Rect.fromLTRB(x1, y1, x2, y2);
+  }
+
+  Detection copyWith({
+    Rect? box,
+    double? confidence,
+    int? classId,
+    String? label,
+    int? inferenceTime,
+    double? letterboxScale,
+    double? letterboxDx,
+    double? letterboxDy,
+  }) {
+    return Detection(
+      box: box ?? this.box,
+      confidence: confidence ?? this.confidence,
+      classId: classId ?? this.classId,
+      label: label ?? this.label,
+      inferenceTime: inferenceTime ?? this.inferenceTime,
+      letterboxScale: letterboxScale ?? this.letterboxScale,
+      letterboxDx: letterboxDx ?? this.letterboxDx,
+      letterboxDy: letterboxDy ?? this.letterboxDy,
+    );
   }
 }
