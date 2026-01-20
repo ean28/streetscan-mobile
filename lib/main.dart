@@ -11,6 +11,7 @@ import 'screens/main_screen.dart';
 import 'package:provider/provider.dart';
 import 'core/services/upload_manager.dart';
 import 'core/services/notification_service.dart';
+import 'core/services/proximity_service.dart';
 import 'firebase_options.dart';
 
 // Global camera list
@@ -41,6 +42,13 @@ Future<void> main() async {
   cameras = await availableCameras();
   // Initialize notifications with navigator key
   await NotificationService().init(navigatorKey);
+
+  // Start proximity service (keeps an ongoing notification when nearby potholes exist).
+  try {
+    await ProximityService.instance.init();
+  } catch (e) {
+    // non-fatal
+  }
 
   runApp(
     ChangeNotifierProvider(

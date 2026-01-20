@@ -69,4 +69,43 @@ class NotificationService {
       payload: payload,
     );
   }
+
+  // --- Proximity persistent notification support ---
+  static const int _proximityNotifId = 1001;
+  static const String _proximityChannelId = 'proximity_channel';
+
+  Future<void> showOrUpdateProximityNotification(
+    int count,
+    double closestMeters,
+  ) async {
+    final title = count > 0 ? 'Nearby potholes: $count' : 'No nearby potholes';
+    final body = count > 0
+        ? 'Closest: ${closestMeters.toStringAsFixed(0)} m • Tap for details'
+        : 'No potholes within range';
+
+    final androidDetails = AndroidNotificationDetails(
+      _proximityChannelId,
+      'Proximity Alerts',
+      channelDescription: 'Persistent proximity alerts for nearby potholes',
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      onlyAlertOnce: true,
+    );
+    final iosDetails = DarwinNotificationDetails(presentAlert: true);
+
+    await _plugin.show(
+      _proximityNotifId,
+      title,
+      body,
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
+      payload: 'proximity',
+    );
+  }
+
+  Future<void> cancelProximityNotification() async {
+    try {
+      await _plugin.cancel(_proximityNotifId);
+    } catch (_) {}
+  }
 }

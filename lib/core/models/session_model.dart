@@ -1,4 +1,4 @@
-import 'dart:math';
+import '../utils/id_utils.dart';
 import 'package:hive/hive.dart';
 import 'pothole_entry.dart';
 
@@ -6,8 +6,6 @@ part 'session_model.g.dart';
 
 @HiveType(typeId: 0)
 class SessionModel extends HiveObject {
-  static final _rand = Random();
-
   @HiveField(0)
   final String id;
 
@@ -31,11 +29,11 @@ class SessionModel extends HiveObject {
   int? totalFramesProcessed;
 
   @HiveField(7)
-  List<Map<String, double>>? gpsTrack; 
+  List<Map<String, double>>? gpsTrack;
   // each item = {"lat": 13.42, "lng": 123.34}
 
   @HiveField(8)
-  Map<String, int>? potholeSeverityCounts = {}; 
+  Map<String, int>? potholeSeverityCounts = {};
   // {"minor": 12, "major": 3}
 
   SessionModel({
@@ -48,17 +46,12 @@ class SessionModel extends HiveObject {
     this.totalFramesProcessed,
     List<Map<String, double>>? gpsTrack,
     Map<String, int>? potholeSeverityCounts,
-  })  : id = id ?? _generateId(),
-        entries = entries ?? [],
-        gpsTrack = gpsTrack ?? [],
-        potholeSeverityCounts = potholeSeverityCounts ?? {};
+  }) : id = id ?? _generateId(),
+       entries = entries ?? [],
+       gpsTrack = gpsTrack ?? [],
+       potholeSeverityCounts = potholeSeverityCounts ?? {};
 
-  static String _generateId() {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    final randomPart =
-        List.generate(4, (_) => chars[_rand.nextInt(chars.length)]).join();
-    return '${DateTime.now().millisecondsSinceEpoch}_$randomPart';
-  }
+  static String _generateId() => generateShortId(4);
 
   int get count => entries.length;
 
@@ -101,39 +94,41 @@ class SessionModel extends HiveObject {
       averageLatency: averageLatency ?? this.averageLatency,
       totalFramesProcessed: totalFramesProcessed ?? this.totalFramesProcessed,
       gpsTrack: gpsTrack ?? List<Map<String, double>>.from(this.gpsTrack ?? []),
-      potholeSeverityCounts: potholeSeverityCounts ??
+      potholeSeverityCounts:
+          potholeSeverityCounts ??
           Map<String, int>.from(this.potholeSeverityCounts ?? {}),
     );
   }
 
   Map<String, dynamic> toMap() => {
-        'id': id,
-        'createdAt': createdAt.toIso8601String(),
-        'durationSeconds': durationSeconds,
-        'entries': entries.map((e) => e.toMap()).toList(),
-        'pendingUpload': pendingUpload,
-        'averageLatency': averageLatency,
-        'totalFramesProcessed': totalFramesProcessed,
-        'gpsTrack': gpsTrack,
-        'potholeSeverityCounts': potholeSeverityCounts,
-      };
+    'id': id,
+    'createdAt': createdAt.toIso8601String(),
+    'durationSeconds': durationSeconds,
+    'entries': entries.map((e) => e.toMap()).toList(),
+    'pendingUpload': pendingUpload,
+    'averageLatency': averageLatency,
+    'totalFramesProcessed': totalFramesProcessed,
+    'gpsTrack': gpsTrack,
+    'potholeSeverityCounts': potholeSeverityCounts,
+  };
 
   factory SessionModel.fromMap(Map<String, dynamic> m) => SessionModel(
-        id: m['id'],
-        createdAt: DateTime.parse(m['createdAt']),
-        durationSeconds: m['durationSeconds'] ?? 0,
-        entries: (m['entries'] as List<dynamic>? ?? [])
-            .map((e) => PotholeEntry.fromMap(Map<String, dynamic>.from(e)))
-            .toList(),
-        pendingUpload: m['pendingUpload'] ?? true,
-        averageLatency: (m['averageLatency'] as num?)?.toDouble() ?? 0.0,
-        totalFramesProcessed: m['totalFramesProcessed'] ?? 0,
-        gpsTrack: (m['gpsTrack'] as List<dynamic>? ?? [])
-            .map((e) => Map<String, double>.from(e))
-            .toList(),
-        potholeSeverityCounts:
-            Map<String, int>.from(m['potholeSeverityCounts'] ?? {}),
-      );
+    id: m['id'],
+    createdAt: DateTime.parse(m['createdAt']),
+    durationSeconds: m['durationSeconds'] ?? 0,
+    entries: (m['entries'] as List<dynamic>? ?? [])
+        .map((e) => PotholeEntry.fromMap(Map<String, dynamic>.from(e)))
+        .toList(),
+    pendingUpload: m['pendingUpload'] ?? true,
+    averageLatency: (m['averageLatency'] as num?)?.toDouble() ?? 0.0,
+    totalFramesProcessed: m['totalFramesProcessed'] ?? 0,
+    gpsTrack: (m['gpsTrack'] as List<dynamic>? ?? [])
+        .map((e) => Map<String, double>.from(e))
+        .toList(),
+    potholeSeverityCounts: Map<String, int>.from(
+      m['potholeSeverityCounts'] ?? {},
+    ),
+  );
 
   void incrementSeverity(String label) {
     potholeSeverityCounts?[label] = (potholeSeverityCounts?[label] ?? 0) + 1;

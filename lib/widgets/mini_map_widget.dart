@@ -8,6 +8,7 @@ import 'package:street_scan/widgets/common/map/map_tile_layer.dart';
 import 'package:street_scan/widgets/common/map/map_controls.dart';
 
 import '../core/models/session_model.dart';
+import '../core/services/proximity_service.dart';
 
 class MiniMapWidget extends StatefulWidget {
   final MapController mapController;
@@ -38,7 +39,6 @@ class _MiniMapWidgetState extends State<MiniMapWidget> {
   bool _loadingGlobal = false;
   final ValueNotifier<List<Marker>> _globalMarkers = ValueNotifier(const []);
   final ValueNotifier<List<Marker>> _localMarkers = ValueNotifier(const []);
-  final ValueNotifier<List<Marker>> _displayMarkers = ValueNotifier(const []);
   List<Marker>? _cachedAllMarkers;
 
   List<Marker> _buildLocalMarkers(List<SessionModel> sessions) {
@@ -76,10 +76,7 @@ class _MiniMapWidgetState extends State<MiniMapWidget> {
     super.initState();
     // compute local markers once and cache in a ValueNotifier
     _localMarkers.value = _buildLocalMarkers(widget.sessions);
-    // compute combined display markers and keep updated when source/local/global changes
-    _computeDisplayMarkers();
-    _localMarkers.addListener(_computeDisplayMarkers);
-    _globalMarkers.addListener(_computeDisplayMarkers);
+    // compute local markers once; display markers are computed reactively in build
   }
 
   @override
@@ -94,33 +91,12 @@ class _MiniMapWidgetState extends State<MiniMapWidget> {
 
   @override
   void dispose() {
-    _globalMarkers.removeListener(_computeDisplayMarkers);
-    _localMarkers.removeListener(_computeDisplayMarkers);
-    _displayMarkers.dispose();
     _globalMarkers.dispose();
     _localMarkers.dispose();
     super.dispose();
   }
 
-  void _computeDisplayMarkers() {
-    try {
-      final potholeMarkers = _localMarkers.value;
-      final gm = _globalMarkers.value;
-      final List<Marker> markers = [
-        ...(_source != 2 ? potholeMarkers : <Marker>[]),
-        Marker(
-          point: widget.currentLocation,
-          width: 36,
-          height: 36,
-          child: const Icon(Icons.navigation, color: Colors.blue, size: 28),
-        ),
-        if (_source != 0) ...gm.cast<Marker>(),
-      ];
-      _displayMarkers.value = markers;
-    } catch (e) {
-      debugPrint('⚠️ computeDisplayMarkers failed: $e');
-    }
-  }
+  // display markers are computed on-the-fly in build using ValueListenableBuilders
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +128,19 @@ class _MiniMapWidgetState extends State<MiniMapWidget> {
                   apiKey: 'x3dDnoZnrBeQEatH0r2F',
                   mapId: 'streets',
                 ),
+                // Proximity radius circle (shows search radius around current location)
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: widget.currentLocation,
+                      color: Colors.blue.withOpacity(0.12),
+                      borderColor: Colors.blue.withOpacity(0.6),
+                      borderStrokeWidth: 1,
+                      radius: ProximityService.instance.radiusMeters,
+                      useRadiusInMeter: true,
+                    ),
+                  ],
+                ),
                 if (showHeatmap)
                   ValueListenableBuilder<List<Marker>>(
                     valueListenable: _globalMarkers,
@@ -177,11 +166,30 @@ class _MiniMapWidgetState extends State<MiniMapWidget> {
                       );
                     },
                   ),
-                // Marker layer (cached list for performance)
+                // Marker layer (computed reactively from local/global lists)
                 ValueListenableBuilder<List<Marker>>(
-                  valueListenable: _displayMarkers,
-                  builder: (context, markers, _) {
-                    return MarkerLayer(markers: markers);
+                  valueListenable: _localMarkers,
+                  builder: (context, localMarkers, _) {
+                    return ValueListenableBuilder<List<Marker>>(
+                      valueListenable: _globalMarkers,
+                      builder: (context, gm, _) {
+                        final List<Marker> markers = [
+                          ...(_source != 2 ? localMarkers : <Marker>[]),
+                          Marker(
+                            point: widget.currentLocation,
+                            width: 36,
+                            height: 36,
+                            child: const Icon(
+                              Icons.navigation,
+                              color: Colors.blue,
+                              size: 28,
+                            ),
+                          ),
+                          if (_source != 0) ...gm.cast<Marker>(),
+                        ];
+                        return MarkerLayer(markers: markers);
+                      },
+                    );
                   },
                 ),
               ],

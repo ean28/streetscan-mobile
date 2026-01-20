@@ -7,6 +7,7 @@ import '../core/models/session_model.dart';
 import '../widgets/common/map/map_helpers.dart';
 import '../widgets/common/map/map_controls.dart';
 import '../widgets/common/map/map_tile_layer.dart';
+import '../core/services/proximity_service.dart';
 
 class FullScreenMap extends StatefulWidget {
   final LatLng initialLocation;
@@ -29,7 +30,6 @@ class _FullScreenMapState extends State<FullScreenMap> {
   bool _loadingGlobal = false;
   final ValueNotifier<List<Marker>> _globalMarkers = ValueNotifier(const []);
   final ValueNotifier<List<Marker>> _localMarkers = ValueNotifier(const []);
-  final ValueNotifier<List<Marker>> _displayMarkers = ValueNotifier(const []);
   List<Marker>? _cachedAllMarkers;
 
   /// Use shared helpers
@@ -53,9 +53,7 @@ class _FullScreenMapState extends State<FullScreenMap> {
   void initState() {
     super.initState();
     _localMarkers.value = _buildLocalMarkers(widget.sessions);
-    _computeDisplayMarkers();
-    _localMarkers.addListener(_computeDisplayMarkers);
-    _globalMarkers.addListener(_computeDisplayMarkers);
+    // display markers are computed reactively in build; no manual listeners
   }
 
   @override
@@ -69,33 +67,12 @@ class _FullScreenMapState extends State<FullScreenMap> {
 
   @override
   void dispose() {
-    _globalMarkers.removeListener(_computeDisplayMarkers);
-    _localMarkers.removeListener(_computeDisplayMarkers);
-    _displayMarkers.dispose();
     _globalMarkers.dispose();
     _localMarkers.dispose();
     super.dispose();
   }
 
-  void _computeDisplayMarkers() {
-    try {
-      final local = _localMarkers.value;
-      final gm = _globalMarkers.value;
-      final List<Marker> markers = [
-        ...(_source != 2 ? local : <Marker>[]),
-        Marker(
-          point: widget.initialLocation,
-          width: 36,
-          height: 36,
-          child: const Icon(Icons.navigation, color: Colors.blue, size: 28),
-        ),
-        if (_source != 0) ...gm.cast<Marker>(),
-      ];
-      _displayMarkers.value = markers;
-    } catch (e) {
-      debugPrint('⚠️ computeDisplayMarkers failed: $e');
-    }
-  }
+  // display markers are computed on-the-fly in build using nested ValueListenableBuilders
 
   @override
   Widget build(BuildContext context) {
@@ -125,6 +102,19 @@ class _FullScreenMapState extends State<FullScreenMap> {
                 apiKey: 'x3dDnoZnrBeQEatH0r2F',
                 mapId: 'streets',
               ),
+              // Proximity radius visualization
+              CircleLayer(
+                circles: [
+                  CircleMarker(
+                    point: widget.initialLocation,
+                    color: Colors.blue.withOpacity(0.12),
+                    borderColor: Colors.blue.withOpacity(0.6),
+                    borderStrokeWidth: 1,
+                    radius: ProximityService.instance.radiusMeters,
+                    useRadiusInMeter: true,
+                  ),
+                ],
+              ),
               if (showHeatmap)
                 ValueListenableBuilder<List<Marker>>(
                   valueListenable: _globalMarkers,
@@ -149,9 +139,28 @@ class _FullScreenMapState extends State<FullScreenMap> {
                   },
                 ),
               ValueListenableBuilder<List<Marker>>(
-                valueListenable: _displayMarkers,
-                builder: (context, markers, _) {
-                  return MarkerLayer(markers: markers);
+                valueListenable: _localMarkers,
+                builder: (context, localMarkers, _) {
+                  return ValueListenableBuilder<List<Marker>>(
+                    valueListenable: _globalMarkers,
+                    builder: (context, gm, _) {
+                      final List<Marker> markers = [
+                        ...(_source != 2 ? localMarkers : <Marker>[]),
+                        Marker(
+                          point: widget.initialLocation,
+                          width: 36,
+                          height: 36,
+                          child: const Icon(
+                            Icons.navigation,
+                            color: Colors.blue,
+                            size: 28,
+                          ),
+                        ),
+                        if (_source != 0) ...gm.cast<Marker>(),
+                      ];
+                      return MarkerLayer(markers: markers);
+                    },
+                  );
                 },
               ),
             ],

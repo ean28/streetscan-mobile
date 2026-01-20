@@ -5,7 +5,7 @@ import 'package:street_scan/core/models/session_model.dart';
 class RemoteList extends StatelessWidget {
   final bool loadingRemote;
   final List<SessionModel> remoteSessions;
-  final List<SessionModel> localSessions; // for comparison
+  final List<SessionModel> localSessions;
 
   const RemoteList({
     super.key,
@@ -54,7 +54,6 @@ class RemoteList extends StatelessWidget {
         final r = remoteSessions[index];
         final existsLocally = _existsLocally(r);
 
-        // Use local data if available, otherwise firebase
         final session = _getEffectiveSession(r);
         final potholeCount = session.entries.length;
 
@@ -71,7 +70,7 @@ class RemoteList extends StatelessWidget {
               'Uploaded: ${session.createdAt.toLocal().toString().split('.')[0]}',
             ),
             onTap: () {
-              // Optional: implement read-only session viewer
+              // Handle session tap
             },
           ),
         );

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:street_scan/screens/assessmodel_screen.dart';
+import 'package:street_scan/screens/live_detection_screen.dart';
 import 'package:street_scan/screens/upload_manager_screen.dart';
-
-import 'home_screen.dart';
-import 'camera_screen.dart';
-import 'detection_screen.dart';
+import 'package:street_scan/screens/home_screen.dart';
+import 'package:street_scan/screens/camera_screen.dart';
 
 class MainScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -43,7 +42,7 @@ class _MainScreenState extends State<MainScreen> {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => DetectionScreen(cameras: widget.cameras),
+                builder: (_) => LiveDetectionScreen(cameras: widget.cameras),
               ),
             );
           } else if (index == 3) {

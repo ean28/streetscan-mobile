@@ -5,13 +5,14 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:street_scan/screens/session_review_screen.dart';
 import 'package:street_scan/screens/upload_screen.dart';
+import 'package:street_scan/screens/live_detection_screen.dart';
 
 import '../core/services/local_storage_service.dart';
+import '../core/services/proximity_service.dart';
 import '../core/models/session_model.dart';
 import '../widgets/mini_map_widget.dart';
 import '../widgets/session_tile.dart';
 import 'fullscreen_map.dart';
-import 'detection_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -116,57 +117,133 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           physics: const AlwaysScrollableScrollPhysics(),
           child: Column(
             children: [
-              const SizedBox(height: 12),
-              const Text(
-                "Street Scan",
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              const SizedBox(
+                height: 30,
+              ), // top spacing above title and notification
+              // Centered title with notification pinned to the far right
+              Stack(
+                children: [
+                  // Centered title
+                  SizedBox(
+                    width: double.infinity,
+                    child: Center(
+                      child: const Text(
+                        'Street Scan',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Right-aligned notification
+                  Positioned(
+                    right: 12,
+                    top: 0,
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: ProximityService.instance.nearbyCount,
+                      builder: (context, total, child) {
+                        return GestureDetector(
+                          onTap: () {
+                            final local = ProximityService
+                                .instance
+                                .localNearbyCount
+                                .value;
+                            final server = ProximityService
+                                .instance
+                                .serverNearbyCount
+                                .value;
+                            showDialog(
+                              context: context,
+                              builder: (c) => AlertDialog(
+                                title: const Text('Nearby Potholes'),
+                                content: Text(
+                                  'Total: $total\nLocal: $local\nServer: $server',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(c),
+                                    child: const Text('OK'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              const Icon(
+                                Icons.notifications,
+                                size: 26,
+                                color: Colors.black54,
+                              ),
+                              if (total > 0)
+                                Positioned(
+                                  right: 0,
+                                  top: 2,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(5),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      '$total',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
 
-              // Mini map
               _loadingLocation
                   ? const SizedBox(
-                      height: 150,
+                      height: 100,
                       child: Center(child: CircularProgressIndicator()),
                     )
                   : MiniMapWidget(
                       mapController: _mapController,
                       currentLocation: _currentLocation,
                       sessions: _sessions,
-                      height: miniHeight,
                       onFullScreenTap: _openFullScreenMap,
+                      height: miniHeight,
                     ),
-
-              const Divider(),
-
-              // Action buttons
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _openUploadScreen,
-                      icon: const Icon(Icons.cloud_upload),
-                      label: const Text('Upload All'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                DetectionScreen(cameras: widget.cameras),
-                          ),
-                        ).then((_) => _loadSessions());
-                      },
-                      icon: const Icon(Icons.camera_alt),
-                      label: const Text('Start Detection'),
-                    ),
-                  ],
-                ),
+              // Action buttons row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _openUploadScreen,
+                    icon: const Icon(Icons.cloud_upload),
+                    label: const Text('Upload All'),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              LiveDetectionScreen(cameras: widget.cameras),
+                        ),
+                      ).then((_) => _loadSessions());
+                    },
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text('Start Detection'),
+                  ),
+                ],
               ),
-
               const SizedBox(height: 12),
 
               // Cached sessions

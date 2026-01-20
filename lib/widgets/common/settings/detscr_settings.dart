@@ -147,57 +147,56 @@ class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
                     setModalState(() => _selectedBackend = value);
                     await PotholeDetector.instance.loadModel();
                     if (kDebugMode) {
-                      debugPrint("Switched backend to ${value.name}");
+                      debugPrint("Switched backend to ${value.name} ");
                     }
                     setState(() {});
                   },
                 ),
               ),
 
-              // FPS / processing interval
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text(
-                  "Inference Rate",
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: DropdownButton<int>(
-                  isExpanded: true,
-                  value: DetectionConfig.instance.processingIntervalMs,
-                  items: const [1, 5, 8, 10, 15].map((fps) {
-                    final ms = (1000 / fps).round();
-                    return DropdownMenuItem<int>(
-                      value: ms,
-                      child: Text("$fps FPS (${ms} ms)"),
-                    );
-                  }).toList(),
-                  onChanged: (value) async {
-                    if (value == null) return;
-                    setModalState(
-                      () => DetectionConfig.instance.setProcessingIntervalMs(
-                        value,
-                      ),
-                    );
-                    if (kDebugMode) {
-                      debugPrint('Set processing interval to ${value}ms');
-                    }
-                    setState(() {});
-                  },
-                ),
-              ),
-
+              // // FPS / processing interval
+              // const Padding(
+              //   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              //   child: Text(
+              //     "Inference Rate",
+              //     style: TextStyle(fontWeight: FontWeight.bold),
+              //   ),
+              // ),
+              // Padding(
+              //   padding: const EdgeInsets.symmetric(horizontal: 16),
+              //   child: DropdownButton<int>(
+              //     isExpanded: true,
+              //     value: DetectionConfig.instance.processingIntervalMs,
+              //     items: const [1, 5, 8, 10, 15].map((fps) {
+              //       final ms = (1000 / fps).round();
+              //       return DropdownMenuItem<int>(
+              //         value: ms,
+              //         child: Text("$fps FPS ($ms ms)"),
+              //       );
+              //     }).toList(),
+              //     onChanged: (value) async {
+              //       if (value == null) return;
+              //       setModalState(
+              //         () => DetectionConfig.instance.setProcessingIntervalMs(
+              //           value,
+              //         ),
+              //       );
+              //       if (kDebugMode) {
+              //         debugPrint('Set processing interval to ${value}ms');
+              //       }
+              //       setState(() {});
+              //     },
+              //   ),
+              // ),
               const Divider(),
-              const ListTile(
-                title: Text("GPS Logging Interval"),
-                subtitle: Text("2 seconds"),
-              ),
-              const ListTile(
-                title: Text("Image Compression Quality"),
-                subtitle: Text("Medium (82%)"),
-              ),
+              // const ListTile(
+              //   title: Text("GPS Logging Interval"),
+              //   subtitle: Text("2 seconds"),
+              // ),
+              // const ListTile(
+              //   title: Text("Image Compression Quality"),
+              //   subtitle: Text("Medium (82%)"),
+              // ),
               SwitchListTile(
                 title: const Text("Prevent Sleep During Logging"),
                 value: true,
@@ -210,11 +209,11 @@ class _DetectionScreenSettingsState extends State<DetectionScreenSettings> {
                   Navigator.pop(c);
                 },
               ),
-              SwitchListTile(
-                title: const Text("Prompt Review After Session"),
-                value: true,
-                onChanged: (v) {},
-              ),
+              // SwitchListTile(
+              //   title: const Text("Prompt Review After Session"),
+              //   value: true,
+              //   onChanged: (v) {},
+              // ),
             ],
           );
         },
