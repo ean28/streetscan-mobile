@@ -1,7 +1,6 @@
 // Cleaned, single implementation of the inference isolate manager.
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
@@ -137,9 +136,18 @@ class InferenceIsolateManager {
         } else if (type == 'dropped') {
           final s = statsNotifier.value.copyWith(framesDroppedIncrement: 1);
           statsNotifier.value = s;
+          // Notify consumer that a frame was dropped so processing flag can clear.
+          try {
+            onResult?.call(<Detection>[], 0, 0);
+          } catch (e, st) {
+            if (kDebugMode) {
+              debugPrint('onResult (dropped) handler failed: $e\n$st');
+            }
+          }
         } else if (type == 'interval_set') {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('Inference isolate: interval set acknowledged');
+          }
         }
       }
     });
@@ -176,15 +184,30 @@ class InferenceIsolateManager {
     statsNotifier.value = s;
   }
 
-  Future<void> sendFrame(Uint8List rgbBytes, int width, int height) async {
+  Future<void> sendFrame(dynamic frameData, int width, int height) async {
     if (_sendPort == null) return;
     _noteFrameSent();
-    _sendPort!.send({
-      'type': 'frame',
-      'bytes': rgbBytes,
-      'width': width,
-      'height': height,
-    });
+    if (frameData is Uint8List) {
+      _sendPort!.send({
+        'type': 'frame',
+        'bytes': frameData,
+        'width': width,
+        'height': height,
+      });
+    } else if (frameData is Map<String, dynamic>) {
+      // pass through the plane buffers and metadata
+      _sendPort!.send({
+        'type': 'frame',
+        'y': frameData['y'],
+        'u': frameData['u'],
+        'v': frameData['v'],
+        'width': frameData['width'],
+        'height': frameData['height'],
+        'yRowStride': frameData['yRowStride'],
+        'uvRowStride': frameData['uvRowStride'],
+        'uvPixelStride': frameData['uvPixelStride'],
+      });
+    }
   }
 
   static Detection? _detectionFromMap(Map<String, dynamic> m) {
@@ -239,8 +262,19 @@ Future<void> _isolateEntry(_IsolateInitParams params) async {
     try {
       final int sizeValue = DetectionConfig.instance.sizeValue;
       if (sizeValue > 0) {
-        final dummy = Uint8List(sizeValue * sizeValue * 3);
-        await detector.processImageBytes(dummy, sizeValue, sizeValue);
+        // Create dummy YUV planes
+        final dummyY = Uint8List(sizeValue * sizeValue);
+        final dummyUV = Uint8List(sizeValue * sizeValue ~/ 4);
+        await detector.processFrameFromYuv(
+          dummyY,
+          dummyUV,
+          dummyUV,
+          sizeValue,
+          sizeValue,
+          sizeValue,
+          sizeValue ~/ 2,
+          1,
+        );
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Prewarm failed: $e');
@@ -267,21 +301,48 @@ Future<void> _isolateEntry(_IsolateInitParams params) async {
         }
         lastProcessedAt = now;
 
-        final bytes = raw['bytes'] as Uint8List;
         final width = raw['width'] as int;
         final height = raw['height'] as int;
 
+        List<Detection> dets = [];
+        int detectionMs = 0;
+        int inferenceMs = 0;
+
         try {
           final sw = Stopwatch()..start();
-          final dets = await PotholeDetector.instance.processImageBytes(
-            bytes,
-            width,
-            height,
-          );
-          sw.stop();
 
-          final detectionMs = sw.elapsedMilliseconds;
-          final inferenceMs = PotholeDetector.instance.lastInferenceMs;
+          if (raw.containsKey('bytes')) {
+            // RGB bytes provided (e.g. static test)
+            final rgbBytes = raw['bytes'] as Uint8List;
+            dets = await PotholeDetector.instance.processFrameFromRgb(
+              rgbBytes,
+              width,
+              height,
+            );
+          } else if (raw.containsKey('y')) {
+            // YUV planes provided
+            final y = raw['y'] as Uint8List;
+            final u = raw['u'] as Uint8List;
+            final v = raw['v'] as Uint8List;
+            final yRowStride = raw['yRowStride'] as int;
+            final uvRowStride = raw['uvRowStride'] as int;
+            final uvPixelStride = raw['uvPixelStride'] as int;
+
+            dets = await PotholeDetector.instance.processFrameFromYuv(
+              y,
+              u,
+              v,
+              width,
+              height,
+              yRowStride,
+              uvRowStride,
+              uvPixelStride,
+            );
+          }
+
+          sw.stop();
+          detectionMs = sw.elapsedMilliseconds;
+          inferenceMs = PotholeDetector.instance.lastInferenceMs;
 
           final out = dets
               .map(

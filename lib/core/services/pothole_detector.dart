@@ -1,9 +1,13 @@
-// lib/core/services/pothole_detector.dart
-import 'package:flutter/services.dart';
-import 'package:image/image.dart' as img;
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
+import 'dart:io' show Platform;
+
 import '../detection/detection.dart';
+import '../detection/image_preprocessor.dart';
+import '../detection/yolo_output_parser.dart';
 import 'config/detection_settings.dart';
 
 enum InferenceBackend { cpu }
@@ -12,18 +16,28 @@ class PotholeDetector {
   Interpreter? _interpreter;
   List<String> _labels = [];
   bool _initialized = false;
-
   InferenceSize? _activeSize;
   final InferenceBackend _backendUsed = InferenceBackend.cpu;
+
+  Tensor? _inputTensor;
+  Tensor? _outputTensor;
+
+  List<List<dynamic>>? _cachedNestedOutput;
+
+  final ImagePreprocessor _preprocessor = ImagePreprocessor();
+  YoloOutputParser? _outputParser;
 
   int _frameCount = 0;
   int _lastInferenceMs = 0;
   int _lastNmsMs = 0;
   int _lastPreprocessMs = 0;
 
+  LetterboxInfo? _lastLetterbox;
+
   static final PotholeDetector instance = PotholeDetector._internal();
   PotholeDetector._internal();
 
+  // Public getters
   bool get initialized => _initialized;
   InferenceSize? get activeSize => _activeSize;
   InferenceBackend get backendUsed => _backendUsed;
@@ -32,14 +46,16 @@ class PotholeDetector {
   int get lastNmsMs => _lastNmsMs;
   int get lastPreprocessMs => _lastPreprocessMs;
 
+  /// Debug boxes in model-input coordinates (for visualization).
+  List<Rect> get lastPadBoxes => _outputParser?.lastPadBoxes ?? const [];
+  List<Rect> get lastAltPadBoxes => _outputParser?.lastAltPadBoxes ?? const [];
+
   Future<void> loadModel() async {
     if (_initialized) return;
-
     final modelBytes = (await rootBundle.load(
       DetectionConfig.instance.currentModelAsset,
     )).buffer.asUint8List();
     final labels = await DetectionConfig.instance.loadLabels();
-
     await loadModelFromBuffer(modelBytes, labels);
   }
 
@@ -50,13 +66,25 @@ class PotholeDetector {
     if (_initialized) return;
 
     try {
-      final options = InterpreterOptions();
+      final numThreads = _determineThreadCount();
+      final options = _createInterpreterOptions(numThreads);
+
       _interpreter = Interpreter.fromBuffer(modelBytes, options: options);
+      _interpreter!.allocateTensors();
+
       _labels = labels;
       _activeSize = DetectionConfig.instance.inputSize;
       _initialized = true;
+
+      _inputTensor = _interpreter!.getInputTensor(0);
+      _outputTensor = _interpreter!.getOutputTensor(0);
+
+      // Initialize output parser with labels
+      _outputParser = YoloOutputParser(labels: _labels);
+
       debugPrint(
-        "✅ PotholeDetector: model loaded (buffer). Labels: ${labels.length}",
+        "✅ PotholeDetector: model loaded. "
+        "Input: ${_inputTensor?.shape}, Output: ${_outputTensor?.shape}",
       );
     } catch (e, st) {
       debugPrint("❌ PotholeDetector: error loading model: $e\n$st");
@@ -64,6 +92,48 @@ class PotholeDetector {
     }
   }
 
+  /// Determine optimal thread count for inference.
+  int _determineThreadCount() {
+    int numThreads = 1;
+    try {
+      final int cpuCount = Platform.numberOfProcessors;
+      numThreads = math.max(1, cpuCount - 1);
+      if (kDebugMode) {
+        debugPrint("Intended TFLite Interpreter threads: $numThreads");
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("Failed to determine CPU count for TFLite threads: $e");
+      }
+    }
+    return numThreads;
+  }
+
+  /// Create interpreter options with XNNPACK delegate.
+  InterpreterOptions _createInterpreterOptions(int numThreads) {
+    final options = InterpreterOptions();
+    try {
+      if (Platform.isAndroid || Platform.isIOS) {
+        options.addDelegate(
+          XNNPackDelegate(
+            options: XNNPackDelegateOptions(numThreads: numThreads),
+          ),
+        );
+        if (kDebugMode) {
+          debugPrint(
+            "✅ XNNPACK delegate initialized with $numThreads threads.",
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint(
+        "⚠️ XNNPACK delegate failed to initialize, falling back to CPU: $e",
+      );
+    }
+    return options;
+  }
+
+  /// Release interpreter resources.
   void close() {
     try {
       _interpreter?.close();
@@ -71,276 +141,203 @@ class PotholeDetector {
     _interpreter = null;
     _initialized = false;
     _labels = [];
+    _cachedNestedOutput = null;
+    _outputParser = null;
+    _lastLetterbox = null;
   }
 
-  Future<List<Detection>> processImageBytes(
+  /// Process an RGB frame and return detections.
+  Future<List<Detection>> processFrameFromRgb(
     Uint8List rgbBytes,
-    int width,
-    int height,
+    int srcWidth,
+    int srcHeight,
   ) async {
-    if (!_initialized || _interpreter == null) {
-      throw Exception(
-        'PotholeDetector not initialized. Call loadModelFromBuffer first.',
-      );
-    }
+    if (!_initialized || _interpreter == null) return [];
 
     _frameCount++;
 
-    final swPre = Stopwatch()..start();
-    final img.Image src = img.Image.fromBytes(
-      width: width,
-      height: height,
-      bytes: rgbBytes.buffer,
-      numChannels: 3,
+    final inputShape = _inputTensor!.shape;
+    final inputH = inputShape[1];
+    final inputW = inputShape[2];
+    final inputChannels = inputShape[3];
+
+    final inputType = _inputTensor!.type;
+    final bool isInt8 = inputType == TensorType.int8;
+    final bool isUint8 = inputType == TensorType.uint8;
+    final bool useQuantizedInput = isInt8 || isUint8;
+
+    double inScale = 1.0;
+    int inZero = 0;
+    if (useQuantizedInput) {
+      final params = _inputTensor!.params;
+      inScale = params.scale;
+      inZero = params.zeroPoint;
+    }
+
+    // Delegate preprocessing
+    final preprocessResult = _preprocessor.preprocessRgb(
+      rgbBytes: rgbBytes,
+      srcWidth: srcWidth,
+      srcHeight: srcHeight,
+      inputW: inputW,
+      inputH: inputH,
+      inputChannels: inputChannels,
+      useQuantizedInput: useQuantizedInput,
+      isInt8: isInt8,
+      inScale: inScale,
+      inZero: inZero,
+      useBgr: DetectionConfig.useBgrInput,
     );
-    swPre.stop();
-    _lastPreprocessMs = swPre.elapsedMilliseconds;
 
-    debugPrint(
-      "🖼️ Frame $_frameCount preprocessing done in $_lastPreprocessMs ms",
-    );
+    _lastPreprocessMs = preprocessResult.preprocessMs;
+    _lastLetterbox = preprocessResult.letterbox;
 
-    final detections = await _runInference(_interpreter!, _labels, src);
-
-    final remapped = detections
-        .map((d) => remapBox(d, src.width, src.height))
-        .toList();
-
-    debugPrint(
-      "📊 Frame $_frameCount total detections after NMS: ${remapped.length}",
-    );
-
-    return remapped;
+    return _runInference(preprocessResult.inputBuffer);
   }
 
-  Future<List<Detection>> _runInference(
-    Interpreter interpreter,
-    List<String> labels,
-    img.Image srcImage,
+  /// Process YUV planes and return detections.
+  Future<List<Detection>> processFrameFromYuv(
+    Uint8List yPlane,
+    Uint8List uPlane,
+    Uint8List vPlane,
+    int srcWidth,
+    int srcHeight,
+    int yRowStride,
+    int uvRowStride,
+    int uvPixelStride,
   ) async {
-    final inputTensor = interpreter.getInputTensor(0);
-    final shape = inputTensor.shape;
-    final batch = shape[0];
-    final inputHeight = shape[1];
-    final inputWidth = shape[2];
-    debugPrint("Input tensor type: ${inputTensor.type}");
-    debugPrint("🧮 Input tensor shape: $shape");
-    debugPrint("Height $inputHeight, Width $inputWidth");
+    if (!_initialized || _interpreter == null) return [];
 
-    final lb = letterbox(srcImage, inputWidth, inputHeight);
+    _frameCount++;
 
-    // --- Preprocessing debug ---
-    final inputList = List.generate(batch, (_) {
-      return List.generate(inputHeight, (y) {
-        return List.generate(inputWidth, (x) {
-          final px = lb.image.getPixel(x, y);
-          final r = px.r / 255.0;
-          final g = px.g / 255.0;
-          final b = px.b / 255.0;
+    final inputShape = _inputTensor!.shape;
+    final inputH = inputShape[1];
+    final inputW = inputShape[2];
+    final inputChannels = inputShape[3];
 
-          // Log top-left, center, bottom-right
-          if ((x == 0 && y == 0) ||
-              (x == inputWidth ~/ 2 && y == inputHeight ~/ 2) ||
-              (x == inputWidth - 1 && y == inputHeight - 1)) {
-            debugPrint("🟢 Pixel[$x,$y] after preprocessing: R=$r, G=$g, B=$b");
-          }
+    final inputType = _inputTensor!.type;
+    final bool isInt8 = inputType == TensorType.int8;
+    final bool isUint8 = inputType == TensorType.uint8;
+    final bool useQuantizedInput = isInt8 || isUint8;
 
-          return [b, g, r]; // RGB mode
-        });
-      });
-    });
+    double inScale = 1.0;
+    int inZero = 0;
+    if (useQuantizedInput) {
+      final params = _inputTensor!.params;
+      inScale = params.scale;
+      inZero = params.zeroPoint;
+    }
 
-    final outputTensor = interpreter.getOutputTensor(0);
-    final outputShape = outputTensor.shape;
-    final numDetections = outputShape[1];
-    debugPrint("🧮 Output tensor shape: $outputShape");
-
-    final output = List.generate(
-      1,
-      (_) => List.generate(numDetections, (_) => List.filled(6, 0.0)),
+    // Delegate preprocessing
+    final preprocessResult = _preprocessor.preprocessYuv(
+      yPlane: yPlane,
+      uPlane: uPlane,
+      vPlane: vPlane,
+      srcWidth: srcWidth,
+      srcHeight: srcHeight,
+      yRowStride: yRowStride,
+      uvRowStride: uvRowStride,
+      uvPixelStride: uvPixelStride,
+      inputW: inputW,
+      inputH: inputH,
+      inputChannels: inputChannels,
+      useQuantizedInput: useQuantizedInput,
+      isInt8: isInt8,
+      inScale: inScale,
+      inZero: inZero,
+      useBgr: DetectionConfig.useBgrInput,
     );
 
+    _lastPreprocessMs = preprocessResult.preprocessMs;
+    _lastLetterbox = preprocessResult.letterbox;
+
+    return _runInference(preprocessResult.inputBuffer);
+  }
+
+  /// Run inference on preprocessed input buffer.
+  Future<List<Detection>> _runInference(Uint8List inputBuffer) async {
     final swInf = Stopwatch()..start();
-    try {
-      interpreter.run(inputList, output);
-    } catch (e, st) {
-      debugPrint('❌ _runInference error: $e\n$st');
-      return [];
+
+    final outputShape = _outputTensor!.shape;
+    final int channels = outputShape[1];
+    final int numDetections = outputShape[2];
+
+    // Prepare output buffer
+    _ensureOutputBuffer(channels, numDetections);
+    final nestedOutput = _cachedNestedOutput!;
+
+    if (kDebugMode) {
+      debugPrint("🧠 Running inference on output shape: $outputShape");
     }
+
+    // Run inference
+    _interpreter!.run(inputBuffer, nestedOutput);
+
     swInf.stop();
     _lastInferenceMs = swInf.elapsedMilliseconds;
-    debugPrint("⏱️ Frame $_frameCount inference time: $_lastInferenceMs ms");
 
-    final rawDetections = <Detection>[];
-
-    for (var row in output[0]) {
-      if (row.length < 6) continue;
-
-      final conf = row[4];
-      if (conf <= 0) continue; // log only positive confidence
-      debugPrint(
-        "RAW DET: conf=$conf, class=${row[5]}, box=(${row[0]},${row[1]},${row[2]},${row[3]})",
-      );
-
-      final xIn = row[0];
-      final yIn = row[1];
-      final wIn = row[2];
-      final hIn = row[3];
-
-      final x1Pad = (xIn - wIn / 2) * inputWidth;
-      final y1Pad = (yIn - hIn / 2) * inputHeight;
-      final x2Pad = (xIn + wIn / 2) * inputWidth;
-      final y2Pad = (yIn + hIn / 2) * inputHeight;
-
-      rawDetections.add(
-        Detection(
-          box: Rect.fromLTRB(
-            x1Pad.clamp(0.0, inputWidth.toDouble()),
-            y1Pad.clamp(0.0, inputHeight.toDouble()),
-            x2Pad.clamp(0.0, inputWidth.toDouble()),
-            y2Pad.clamp(0.0, inputHeight.toDouble()),
-          ),
-          confidence: conf,
-          classId: row[5].toInt().clamp(0, labels.length - 1),
-          label: labels[row[5].toInt().clamp(0, labels.length - 1)],
-          inferenceTime: _lastInferenceMs,
-          letterboxScale: lb.scale,
-          letterboxDx: lb.dx.toDouble(),
-          letterboxDy: lb.dy.toDouble(),
-        ),
-      );
+    if (kDebugMode) {
+      debugPrint("✅ Inference completed in $_lastInferenceMs ms");
     }
 
-    debugPrint(
-      "📊 Frame $_frameCount raw detections count (conf>0): ${rawDetections.length}",
+    // Get output quantization params
+    final params = _outputTensor!.params;
+    final double outScale = params.scale;
+    final int outZero = params.zeroPoint;
+
+    if (kDebugMode) {
+      debugPrint("📊 Output quantization: scale=$outScale, zeroPoint=$outZero");
+    }
+
+    // Delegate output parsing
+    final detections = _outputParser!.parseOutput(
+      nestedOutput: nestedOutput,
+      channels: channels,
+      numDetections: numDetections,
+      inputW: _inputTensor!.shape[2],
+      inputH: _inputTensor!.shape[1],
+      letterbox: _lastLetterbox!,
+      lastInferenceMs: _lastInferenceMs,
+      outScale: outScale,
+      outZero: outZero,
     );
 
+    // Apply NMS
     final swNms = Stopwatch()..start();
-    final filtered = nonMaxSuppression(rawDetections);
+    final filtered = _outputParser!.nonMaxSuppression(detections);
     swNms.stop();
     _lastNmsMs = swNms.elapsedMilliseconds;
-    debugPrint("⏱️ Frame $_frameCount NMS time: $_lastNmsMs ms");
+
+    if (kDebugMode) {
+      for (var d in filtered) {
+        debugPrint(
+          'Box: ${d.box}, scale=${d.letterboxScale}, '
+          'dx=${d.letterboxDx}, dy=${d.letterboxDy}',
+        );
+      }
+    }
 
     return filtered;
   }
 
-  LetterboxResult letterbox(
-    img.Image src,
-    int newWidth,
-    int newHeight, {
-    int padColor = 114,
-  }) {
-    final double scale = (newWidth / src.width < newHeight / src.height)
-        ? newWidth / src.width
-        : newHeight / src.height;
-
-    final int resizedW = (src.width * scale).round();
-    final int resizedH = (src.height * scale).round();
-
-    final img.Image resized = img.copyResize(
-      src,
-      width: resizedW,
-      height: resizedH,
-    );
-    final img.Image output = img.Image(width: newWidth, height: newHeight);
-    final pad = img.ColorRgb8(padColor, padColor, padColor);
-    img.fill(output, color: pad);
-
-    final dx = ((newWidth - resizedW) / 2).round();
-    final dy = ((newHeight - resizedH) / 2).round();
-    img.compositeImage(output, resized, dstX: dx, dstY: dy);
-
-    return LetterboxResult(
-      image: output,
-      scale: scale,
-      dx: dx,
-      dy: dy,
-      resizedW: resizedW,
-      resizedH: resizedH,
-    );
-  }
-
-  Detection remapBox(Detection det, int origW, int origH) {
-    final scale = det.letterboxScale;
-    final dx = det.letterboxDx;
-    final dy = det.letterboxDy;
-
-    double x1 = ((det.box.left - dx) / scale).clamp(0.0, origW - 1.0);
-    double y1 = ((det.box.top - dy) / scale).clamp(0.0, origH - 1.0);
-    double x2 = ((det.box.right - dx) / scale).clamp(0.0, origW - 1.0);
-    double y2 = ((det.box.bottom - dy) / scale).clamp(0.0, origH - 1.0);
-
-    return Detection(
-      box: Rect.fromLTRB(x1, y1, x2, y2),
-      confidence: det.confidence,
-      classId: det.classId,
-      label: det.label,
-      inferenceTime: det.inferenceTime,
-      letterboxScale: scale,
-      letterboxDx: dx,
-      letterboxDy: dy,
-    );
-  }
-
-  List<Detection> nonMaxSuppression(
-    List<Detection> detections, {
-    double? iouThreshold,
-    int? maxDetections,
-  }) {
-    final double threshold = iouThreshold ?? DetectionConfig.iouThreshold;
-    final int max = maxDetections ?? DetectionConfig.maxDetections;
-
-    detections.sort((a, b) => b.confidence.compareTo(a.confidence));
-    final List<Detection> results = [];
-
-    while (detections.isNotEmpty && results.length < max) {
-      final best = detections.removeAt(0);
-      results.add(best);
-
-      detections.removeWhere((det) {
-        if (det.classId != best.classId) return false;
-        final double xx1 = best.box.left > det.box.left
-            ? best.box.left
-            : det.box.left;
-        final double yy1 = best.box.top > det.box.top
-            ? best.box.top
-            : det.box.top;
-        final double xx2 = best.box.right < det.box.right
-            ? best.box.right
-            : det.box.right;
-        final double yy2 = best.box.bottom < det.box.bottom
-            ? best.box.bottom
-            : det.box.bottom;
-        final double w = (xx2 - xx1).clamp(0.0, double.infinity);
-        final double h = (yy2 - yy1).clamp(0.0, double.infinity);
-        final double intersection = w * h;
-        final double union =
-            best.box.width * best.box.height +
-            det.box.width * det.box.height -
-            intersection;
-        final double iou = union > 0 ? intersection / union : 0;
-        return iou > threshold;
-      });
+  /// Ensure output buffer is allocated with correct dimensions.
+  void _ensureOutputBuffer(int channels, int numDetections) {
+    bool nestedOk = false;
+    if (_cachedNestedOutput != null && _cachedNestedOutput!.length == 1) {
+      final row = _cachedNestedOutput![0];
+      if (row.length == channels && row.isNotEmpty) {
+        final first = row[0];
+        if (first is List) {
+          nestedOk = (first).length == numDetections;
+        }
+      }
     }
 
-    return results;
+    if (!nestedOk) {
+      _cachedNestedOutput = List.generate(
+        1,
+        (_) => List.generate(channels, (_) => Float32List(numDetections)),
+      );
+    }
   }
-}
-
-class LetterboxResult {
-  final img.Image image;
-  final double scale;
-  final int dx;
-  final int dy;
-  final int resizedW;
-  final int resizedH;
-
-  LetterboxResult({
-    required this.image,
-    required this.scale,
-    required this.dx,
-    required this.dy,
-    required this.resizedW,
-    required this.resizedH,
-  });
 }

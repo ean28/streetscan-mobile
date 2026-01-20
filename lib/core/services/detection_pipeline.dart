@@ -1,5 +1,4 @@
 import 'dart:async';
-// dart:isolate not needed: using InferenceIsolateManager instead
 import 'package:street_scan/core/services/inference_isolate.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -24,6 +23,8 @@ class PotholeDetectionPipeline {
   InferenceIsolateManager? _inferenceManager;
 
   bool _isProcessing = false;
+  // Buffer a single pending frame when frames arrive while we're processing.
+  CameraImage? _pendingFrame;
 
   // Stats
   int _totalFrames = 0;
@@ -61,12 +62,30 @@ class PotholeDetectionPipeline {
       _totalFrames++;
       _totalDetectionMs += detectionMs;
 
-      if (snapshotEveryFrame || detections.isNotEmpty) {
+      // Always notify UI of the latest detection results so overlays update
+      // in real-time (including when there are no detections). Snapshot
+      // behavior is still controlled by `snapshotEveryFrame` in the caller.
+      try {
         onDetection(detections, detectionMs, inferenceMs);
+      } catch (e, st) {
+        if (kDebugMode) debugPrint('onDetection handler failed: $e\n$st');
       }
       onDetectionMs?.call(detectionMs);
 
+      // Clear processing flag and flush any pending frame so we don't stall
+      // when frames arrive faster than processing rate.
       _isProcessing = false;
+      if (_pendingFrame != null) {
+        final pending = _pendingFrame;
+        _pendingFrame = null;
+        if (pending != null) {
+          try {
+            addFrame(pending);
+          } catch (e) {
+            if (kDebugMode) debugPrint('Failed to requeue pending frame: $e');
+          }
+        }
+      }
     };
 
     // Start manager and wait for it to be ready (it pre-warms inside)
@@ -74,19 +93,44 @@ class PotholeDetectionPipeline {
     if (kDebugMode) debugPrint('✅ Model loaded confirmed in main isolate');
     onModelLoaded?.call();
 
-    // Frame listener - convert frames then send to inference manager
+    // Frame listener - send raw YUV planes to the inference isolate so the
+    // expensive YUV->RGB conversion occurs off the main isolate. This reduces
+    // UI-thread CPU work and avoids long frame processing pauses.
     _frameQueue.stream.listen((frame) async {
       if (_inferenceManager != null && !_isProcessing) {
         _isProcessing = true;
         try {
-          final bytes = cameraImageToBytes(frame);
-          await _inferenceManager!.sendFrame(bytes, frame.width, frame.height);
+          // Copy plane bytes (transferable) and send metadata; conversion will
+          // happen inside the inference isolate.
+          final y = Uint8List.fromList(frame.planes[0].bytes);
+          final u = Uint8List.fromList(frame.planes[1].bytes);
+          final v = Uint8List.fromList(frame.planes[2].bytes);
+          await _inferenceManager!.sendFrame(
+            {
+              'y': y,
+              'u': u,
+              'v': v,
+              'width': frame.width,
+              'height': frame.height,
+              'yRowStride': frame.planes[0].bytesPerRow,
+              'uvRowStride': frame.planes[1].bytesPerRow,
+              'uvPixelStride': frame.planes[1].bytesPerPixel ?? 1,
+            },
+            frame.width,
+            frame.height,
+          );
         } catch (e) {
           if (kDebugMode) debugPrint('Frame conversion failed: $e');
           _isProcessing = false;
         }
       } else {
-        if (kDebugMode) debugPrint('Frame skipped to maintain speed');
+        // Buffer the most recent frame so it can be processed when current
+        // work completes. This avoids starving the pipeline when frames
+        // arrive faster than processing rate.
+        _pendingFrame = frame;
+        if (kDebugMode) {
+          debugPrint('Frame buffered (pending) to maintain speed');
+        }
       }
     });
   }
@@ -131,49 +175,5 @@ class PotholeDetectionPipeline {
     } catch (e) {
       if (kDebugMode) debugPrint('runStaticImageTest failed: $e');
     }
-  }
-}
-
-// ---------------- Helper: CameraImage → RGB bytes ----------------
-Uint8List cameraImageToBytes(CameraImage image) {
-  if (image.format.group == ImageFormatGroup.yuv420 &&
-      image.planes.length >= 3) {
-    final width = image.width;
-    final height = image.height;
-    final rgb = Uint8List(width * height * 3);
-    int offset = 0;
-
-    final yPlane = image.planes[0].bytes;
-    final uPlane = image.planes[1].bytes;
-    final vPlane = image.planes[2].bytes;
-
-    final yRowStride = image.planes[0].bytesPerRow;
-    final uvRowStride = image.planes[1].bytesPerRow;
-    final uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
-
-    for (int y = 0; y < height; y++) {
-      final uvRow = y >> 1;
-      for (int x = 0; x < width; x++) {
-        final uvCol = x >> 1;
-        final yIndex = y * yRowStride + x;
-        final uvIndex = uvRow * uvRowStride + uvCol * uvPixelStride;
-
-        final Y = yPlane[yIndex] & 0xFF;
-        final U = uPlane[uvIndex] & 0xFF;
-        final V = vPlane[uvIndex] & 0xFF;
-
-        int R = (Y + 1.370705 * (V - 128)).round();
-        int G = (Y - 0.698001 * (V - 128) - 0.337633 * (U - 128)).round();
-        int B = (Y + 1.732446 * (U - 128)).round();
-
-        rgb[offset++] = B.clamp(0, 255);
-        rgb[offset++] = G.clamp(0, 255);
-        rgb[offset++] = R.clamp(0, 255);
-      }
-    }
-
-    return rgb;
-  } else {
-    throw Exception("Unsupported CameraImage format");
   }
 }
