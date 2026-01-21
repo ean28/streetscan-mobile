@@ -4,67 +4,108 @@ Real-time pothole detection with road condition reporting and mapping mobile app
 
 For iOS and Android.
 
-## Project Overview
+## 🚀 Project Overview
 
-Street Scan is a Flutter app for capturing and reporting potholes. Core features:
+Street Scan is a high-performance Flutter application designed for real-time pothole detection, road condition reporting, and spatial mapping.
 
-- Local session capture via camera + on-device detection (TFLite model using float32 quantization).
-- Session review UI with per-entry image viewer.
-- Map views (mini + fullscreen) using `flutter_map` and a centralized `MapTileLayer` wrapper that targets MapTiler tiles.
-- Global marker fetching (Firestore) and optional heatmap overlay.
-- Upload manager that batches local sessions and reports progress via local notifications.
+### Key Features
+- **Real-time AI Detection**: Leverages TFLite models (YOLOv8) running on a dedicated Background Isolate for stutter-free preview.
+- **Proximity Alerts**: Background geolocation service that alerts users when approaching known potholes.
+- **Seamless Uploads**: Robust `UploadManager` that batches local captures to Firebase (Firestore) and Cloudinary (Storage) with progress notifications.
+- **Geospatial Mapping**: Integrated map views (mini & fullscreen) with interactive markers and heatmap overlays powered by MapTiler.
+- **Local Storage**: Uses Hive, a No-SQL based local persistence for offline session management and synchronization.
 
-## Camera & Detection (how the app captures sessions)
+## 🏗️ Architecture
 
-Quick guide for working on the capture and on-device detection flows. If you are changing capture, detection or saving behavior, read this first.
+```mermaid
+graph LR
+    %% Camera & Inference
+    subgraph Capture["Camera & Inference"]
+        A[Camera Stream]
+        B[Inference Isolate]
+        A -->|YUV Frames| B
+    end
 
-- Camera capture (file: `lib/screens/camera_screen.dart`)
-	- Purpose: full-screen camera preview, start/stop video recording, GPS logging (1s), and save video + CSV GPS track to a folder.
-	- Key functions: `_initializeCamera`, `_startRecording`, `_stopRecordingAndSave`, `_startLogging`, `_saveGpsCsv`.
-	- Notes & tips:
-		- The code currently requests microphone permission but the controller is created with `enableAudio: false`. If you don't need audio, remove the microphone permission; if you do, enable audio in the controller.
-		- The app uses a default save folder (Android: `/storage/emulated/0/Android/media/...`) and allows picking a folder. On modern Android consider MediaStore or scoped storage instead of requesting `MANAGE_EXTERNAL_STORAGE`.
-		- Prefer selecting the back-facing camera if available (`CameraLensDirection.back`) rather than always using the first camera exposed by the platform.
-		- The GPS logger samples every second with `LocationAccuracy.bestForNavigation`; for battery savings consider a configurable interval and an accuracy threshold.
-		- UI notes: move the `TextEditingController` for the folder field into State and reuse it across builds (avoids recreating controllers each build). Add a confirmation if the user navigates back while recording.
+    %% Detection Pipeline
+    subgraph Detection["Detection Pipeline"]
+        C{Pothole Detected?}
+        E[Detection Overlay]
+    end
 
-- On-device detection & snapshots (file: `lib/screens/detection_screen.dart`)
-	- Purpose: stream camera frames into `PotholeDetectionPipeline`, paint bounding boxes with `DetectionPainter`, and take/save a still image (snapshot) when detections occur. Snapshots are stored under the session folder and a `PotholeEntry` is created for each detection.
-	- Key functions: `_initializeCamera`, `_startImageStream`, `_maybeSnapshot`, `_snapshotPothole`, `_startSession`, `_endSession`.
-	- Notes & tips:
-		- Some camera plugins and devices do not support calling `takePicture()` while an image stream is active. To avoid CameraException, stop the image stream before taking a picture and restart it afterwards.
-		- When scheduling snapshots from detection callbacks, capture a copy of the current detections and pass that copy into the snapshot routine so the persisted `PotholeEntry` matches the detection set that triggered the snapshot.
-		- Use the snapshot queue (already implemented) but ensure it limits concurrency to avoid piling up heavy I/O when the device is busy.
-		- Consider throttling overlay repaint frequency (for example, 10 Hz) to reduce UI work on slower devices.
+    B -->|Detections| C
+    C -->|UI Render| E
 
-## Uploads & Notifications
+    %% Local Storage
+    subgraph Local["Local Storage"]
+        D[Snapshot Storage]
+    end
 
-- `lib/core/services/notification_service.dart` centralizes the local notification initialization and tap handling. It creates a `FlutterLocalNotificationsPlugin` instance and routes payloads to the app navigator.
-- `lib/screens/misc/uploadprogress.dart` and `lib/screens/upload_screen.dart` implement the upload UI. The Upload Manager (`lib/core/services/upload_manager.dart`) coordinates background batching and exposes a `progressStream` that the UI can listen to.
+    C -->|Yes| D
 
-## Developer workflow
+    %% Sync & Cloud
+    subgraph Cloud["Sync & Cloud Services"]
+        F[Upload Manager]
+        G[(Firebase Firestore)]
+        H[(Cloudinary)]
+        F -->|Metadata| G
+        F -->|Images| H
+    end
 
-1. Install Flutter and required platforms (Android SDK / Xcode).
-2. From project root run:
+    D -->|Sync Task| F
 
-```powershell
-flutter pub get
+    %% Location & Alerts
+    subgraph Location["Location & Notifications"]
+        I[Geolocator]
+        J[Proximity Service]
+        K[User Notifications]
+        I -->|GPS Data| J
+        J -->|Alerts| K
+    end
 ```
 
-3. Run analyzer:
+## 📂 Core Structure & Detection
 
-```powershell
-flutter analyze
-```
+### Detection & Capture
+- **Live Detection** ([lib/screens/live_detection_screen.dart](lib/screens/live_detection_screen.dart))
+    - Purpose: High-speed camera preview with real-time YOLOv8 bounding box overlays.
+    - Isolate Pattern: Offloads heavy image processing to `inference_isolate.dart` to maintain 60FPS UI.
+- **Detection Pipeline** ([lib/core/services/detection_pipeline.dart](lib/core/services/detection_pipeline.dart))
+    - Logic for debouncing detections, managing snapshot queues, and mapping detections to spatial coordinates.
+- **Pothole Detector** ([lib/core/services/pothole_detector.dart](lib/core/services/pothole_detector.dart))
+    - The TFLite interpreter wrapper handling model loading and raw tensor inference.
 
-4. Launch on device or emulator:
+### Services & Logic
+- **Upload Manager** ([lib/core/services/upload_manager.dart](lib/core/services/upload_manager.dart))
+    - Handles background batching, retry logic, and synchronization between local data and remote Firebase/Cloudinary.
+- **Proximity Service** ([lib/core/services/proximity_service.dart](lib/core/services/proximity_service.dart))
+    - Background GPS listener that cross-references user location with a global pothole database to provide real-time alerts.
+- **LocalStorage Service** ([lib/core/services/local_storage_service.dart](lib/core/services/local_storage_service.dart))
+    - Centralized Hive manager for session metadata and persistent settings.
 
-```powershell
-flutter run -d <device-id>
-```
+## 🎨 Visuals & UI
 
-5. To build an APK for profiling / release:
+### App Screenshots
+> *Placeholder: Add actual screenshots to `assets/screenshots/` and update links*
 
-```powershell
-flutter build apk --profile
-```
+| Home & Maps | Live Detection | Upload Manager |
+| :---: | :---: | :---: |
+| ![Home](https://via.placeholder.com/200x400?text=Home+Screen) | ![Detection](https://via.placeholder.com/200x400?text=Detection+UI) | ![Uploads](https://via.placeholder.com/200x400?text=Upload+Manager) |
+
+## 🛠️ Developer Workflow
+
+1. **Install Dependencies**
+   ```powershell
+   flutter pub get
+   ```
+
+2. **Check for Issues**
+   ```powershell
+   flutter analyze
+   ```
+
+3. **Running the App**
+   - For physical devices: `flutter run -d <device-id>`
+   - To build for release: `flutter build apk --release`
+
+4. **TFLite Setup**
+   Model files are located in `assets/models/`. If updating models, ensure the input/output shapes match `YOLOOutputParser` in [lib/core/detection/yolo_output_parser.dart](lib/core/detection/yolo_output_parser.dart).
