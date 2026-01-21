@@ -19,48 +19,19 @@ Street Scan is a high-performance Flutter application designed for real-time pot
 
 ```mermaid
 graph LR
-    %% Camera & Inference
-    subgraph Capture["Camera & Inference"]
-        A[Camera Stream]
-        B[Inference Isolate]
-        A -->|YUV Frames| B
-    end
+    A[Camera Stream] --> B[Inference Isolate]
+    B --> C[Detection Pipeline]
 
-    %% Detection Pipeline
-    subgraph Detection["Detection Pipeline"]
-        C{Pothole Detected?}
-        E[Detection Overlay]
-    end
+    C -->|Pothole Found| D[Local Snapshot Storage]
+    C -->|UI Render| E[Detection Overlay]
 
-    B -->|Detections| C
-    C -->|UI Render| E
+    D --> F[Upload Manager]
+    F --> G[Firebase Firestore]
+    F --> H[Cloudinary]
 
-    %% Local Storage
-    subgraph Local["Local Storage"]
-        D[Snapshot Storage]
-    end
+    I[Geolocator] --> J[Proximity Service]
+    J --> K[User Notifications]
 
-    C -->|Yes| D
-
-    %% Sync & Cloud
-    subgraph Cloud["Sync & Cloud Services"]
-        F[Upload Manager]
-        G[(Firebase Firestore)]
-        H[(Cloudinary)]
-        F -->|Metadata| G
-        F -->|Images| H
-    end
-
-    D -->|Sync Task| F
-
-    %% Location & Alerts
-    subgraph Location["Location & Notifications"]
-        I[Geolocator]
-        J[Proximity Service]
-        K[User Notifications]
-        I -->|GPS Data| J
-        J -->|Alerts| K
-    end
 ```
 
 ## 📂 Core Structure & Detection
