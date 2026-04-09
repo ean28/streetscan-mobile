@@ -3,6 +3,7 @@ import 'package:camera/camera.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:street_scan/core/services/local_storage_service.dart';
 import 'package:street_scan/screens/upload_manager_screen.dart';
 import 'core/services/upload_metadata_service.dart';
@@ -21,6 +22,8 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load(fileName: '.env');
 
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);

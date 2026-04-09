@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map/flutter_map.dart';
+import '../core/utils/app_env.dart';
 import '../widgets/common/map/map_tile_layer.dart';
 import 'package:street_scan/core/services/local_storage_service.dart';
 import '../core/models/session_model.dart';
@@ -154,9 +155,9 @@ class _SessionReviewScreenState extends State<SessionReviewScreen> {
                 initialZoom: 10,
               ),
               children: [
-                const MapTileLayer(
-                  apiKey: 'x3dDnoZnrBeQEatH0r2F',
-                  mapId: 'streets',
+                MapTileLayer(
+                  apiKey: AppEnv.mapTilerApiKey,
+                  mapId: AppEnv.mapTilerMapId,
                 ),
                 if (gpsTrack.isNotEmpty)
                   MarkerLayer(

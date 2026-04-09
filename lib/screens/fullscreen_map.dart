@@ -8,6 +8,7 @@ import '../widgets/common/map/map_helpers.dart';
 import '../widgets/common/map/map_controls.dart';
 import '../widgets/common/map/map_tile_layer.dart';
 import '../core/services/proximity_service.dart';
+import '../core/utils/app_env.dart';
 
 class FullScreenMap extends StatefulWidget {
   final LatLng initialLocation;
@@ -98,9 +99,9 @@ class _FullScreenMapState extends State<FullScreenMap> {
               ),
             ),
             children: [
-              const MapTileLayer(
-                apiKey: 'x3dDnoZnrBeQEatH0r2F',
-                mapId: 'streets',
+              MapTileLayer(
+                apiKey: AppEnv.mapTilerApiKey,
+                mapId: AppEnv.mapTilerMapId,
               ),
               // Proximity radius visualization
               CircleLayer(

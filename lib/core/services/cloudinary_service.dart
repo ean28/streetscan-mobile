@@ -2,10 +2,12 @@ import 'package:cloudinary_public/cloudinary_public.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 
+import '../utils/app_env.dart';
+
 class CloudinaryService {
   final CloudinaryPublic _cloudinary = CloudinaryPublic(
-    'ss-img-storage',
-    'pothole_upload',
+    AppEnv.cloudinaryCloudName,
+    AppEnv.cloudinaryUploadPreset,
     cache: false,
   );
 

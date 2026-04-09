@@ -68,6 +68,7 @@ dependencies:
   cloudinary_public: ^0.23.1
   provider: ^6.0.5
   fl_chart: ^1.1.1
+  flutter_dotenv: ^5.1.0
 
 dev_dependencies:
   build_runner: any
@@ -93,6 +94,7 @@ flutter:
     - assets/models/float16_320.tflite
     - assets/model_clabels.txt
     - assets/test/
+    - .env
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

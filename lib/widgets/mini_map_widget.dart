@@ -6,6 +6,7 @@ import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
 import 'package:street_scan/widgets/common/map/map_helpers.dart';
 import 'package:street_scan/widgets/common/map/map_tile_layer.dart';
 import 'package:street_scan/widgets/common/map/map_controls.dart';
+import 'package:street_scan/core/utils/app_env.dart';
 
 import '../core/models/session_model.dart';
 import '../core/services/proximity_service.dart';
@@ -124,9 +125,9 @@ class _MiniMapWidgetState extends State<MiniMapWidget> {
                 ),
               ),
               children: [
-                const MapTileLayer(
-                  apiKey: 'x3dDnoZnrBeQEatH0r2F',
-                  mapId: 'streets',
+                MapTileLayer(
+                  apiKey: AppEnv.mapTilerApiKey,
+                  mapId: AppEnv.mapTilerMapId,
                 ),
                 // Proximity radius circle (shows search radius around current location)
                 CircleLayer(
